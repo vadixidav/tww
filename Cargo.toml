@@ -6,6 +6,7 @@ license = "MIT"
 
 [dependencies]
 log = "0.4.21"
+snafu = { version = "0.8.2", features = ["futures"] }
 tokio = { version = "1.37.0", features = ["macros", "rt-multi-thread", "sync"] }
 wgpu = "0.20.0"
 winit = "0.30.0"
