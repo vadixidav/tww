@@ -33,7 +33,7 @@ pub type Result<T> = core::result::Result<T, TwwError>;
 /// This function does not return until the window closes and all resources are closed unless an error occurs during runtime.
 ///
 /// Pass in `main`, which will be spawned on the `tokio` runtime and act as your entry point.
-pub fn start<F>(main: F) -> Result<()>
+pub fn start<F>(wgpu_instance_descriptor: wgpu::InstanceDescriptor, main: F) -> Result<()>
 where
     F: Future + Send + 'static,
     F::Output: Send + 'static,
@@ -42,7 +42,6 @@ where
         .enable_all()
         .build()
         .unwrap();
-    // let _rt_guard = rt.enter();
 
     let (runtime_commander, runtime_commands) = mpsc::channel(COMMAND_CHANNEL_DEPTH);
 
@@ -63,7 +62,10 @@ where
     rt.spawn(runtime(runtime_commands, winit_commander));
     rt.spawn(main);
 
-    let mut app = Application { runtime_commander };
+    let mut app = Application {
+        instance: wgpu::Instance::new(wgpu_instance_descriptor),
+        runtime_commander,
+    };
 
     event_loop
         .run_app(&mut app)
@@ -269,6 +271,8 @@ enum WindowCommand {
 }
 
 struct Application {
+    #[allow(dead_code)]
+    instance: wgpu::Instance,
     runtime_commander: mpsc::Sender<RuntimeCommand>,
 }
 
