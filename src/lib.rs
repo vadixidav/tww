@@ -134,12 +134,10 @@ impl Window {
 
     pub async fn with_attributes(attributes: WindowAttributes) -> Result<Self> {
         let (responder, response) = oneshot::channel();
-        context()
-            .winit_command(WinitCommand::CreateWindow {
-                responder,
-                attributes,
-            })
-            .await;
+        context().winit_command(WinitCommand::CreateWindow {
+            responder,
+            attributes,
+        });
         response.await.expect("tww::runtime closed unexpectedly")
     }
 
@@ -228,12 +226,10 @@ impl WindowWorker {
                     break;
                 }
                 WindowCommand::CreateSurface { responder } => {
-                    context()
-                        .winit_command(WinitCommand::CreateWindowSurface {
-                            responder,
-                            window: self.window.clone(),
-                        })
-                        .await;
+                    context().winit_command(WinitCommand::CreateWindowSurface {
+                        responder,
+                        window: self.window.clone(),
+                    });
                 }
             }
         }
@@ -351,7 +347,7 @@ impl RuntimeContext {
         );
     }
 
-    async fn winit_command(&self, command: WinitCommand) {
+    fn winit_command(&self, command: WinitCommand) {
         self.winit_commander
             .send_event(command)
             .ok()
