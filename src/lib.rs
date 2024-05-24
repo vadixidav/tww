@@ -153,8 +153,7 @@ impl Window {
             .map(Arc::new);
         match window {
             Ok(window) => {
-                context()
-                    .runtime_command_sync(RuntimeCommand::RegisterWindow { responder, window });
+                context().runtime_command(RuntimeCommand::RegisterWindow { responder, window });
             }
             Err(e) => {
                 // We can ignore the error if the user has dropped their future.
@@ -298,7 +297,7 @@ impl ApplicationHandler<WinitCommand> for Application {
     ) {
         match event {
             WindowEvent::Destroyed => {
-                context().runtime_command_sync(RuntimeCommand::WindowClosed {
+                context().runtime_command(RuntimeCommand::WindowClosed {
                     window_id,
                     result: Ok(()),
                 });
@@ -333,14 +332,7 @@ struct RuntimeContext {
 }
 
 impl RuntimeContext {
-    async fn _runtime_command(&self, command: RuntimeCommand) {
-        self.runtime_commander
-            .send(command)
-            .await
-            .expect("tww::runtime closed unexpectedly");
-    }
-
-    fn runtime_command_sync(&self, command: RuntimeCommand) {
+    fn runtime_command(&self, command: RuntimeCommand) {
         // TODO: Have two separated expected() statements, one for each case, for clarity.
         self.runtime_commander.blocking_send(command).expect(
             "winit event loop running inside of async context or tww::runtime closed unexpectedly",
