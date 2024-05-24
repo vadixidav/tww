@@ -18,14 +18,12 @@ static RUNTIME_CONTEXT: OnceCell<RuntimeContext> = OnceCell::const_new();
 pub enum TwwError {
     #[snafu(display("OS error: {source}"))]
     Os { source: Arc<OsError> },
-    #[snafu(display("winit event loop closed"))]
-    EventLoopClosed,
-    #[snafu(display("tww runtime closed"))]
-    TwwRuntimeClosed,
     #[snafu(display("tww window closed"))]
     TwwWindowClosed,
     #[snafu(display("winit event loop error: {source}"))]
     WinitEventLoop { source: Arc<EventLoopError> },
+    #[snafu(display("create window surface error: {source}"))]
+    CreateWindowSurface { source: wgpu::CreateSurfaceError },
 }
 
 pub type Result<T> = core::result::Result<T, TwwError>;
@@ -33,7 +31,7 @@ pub type Result<T> = core::result::Result<T, TwwError>;
 /// This function does not return until the window closes and all resources are closed unless an error occurs during runtime.
 ///
 /// Pass in `main`, which will be spawned on the `tokio` runtime and act as your entry point.
-pub fn start<F>(wgpu_instance_descriptor: wgpu::InstanceDescriptor, main: F) -> Result<()>
+pub fn start<F>(instance: wgpu::Instance, main: F) -> Result<()>
 where
     F: Future + Send + 'static,
     F::Output: Send + 'static,
@@ -53,19 +51,16 @@ where
 
     RUNTIME_CONTEXT
         .set(RuntimeContext {
-            runtime_commander: runtime_commander.clone(),
-            winit_commander: winit_commander.clone(),
+            runtime_commander,
+            winit_commander,
         })
         .ok()
         .expect("only call tww::start once");
 
-    rt.spawn(runtime(runtime_commands, winit_commander));
+    rt.spawn(runtime(runtime_commands));
     rt.spawn(main);
 
-    let mut app = Application {
-        instance: wgpu::Instance::new(wgpu_instance_descriptor),
-        runtime_commander,
-    };
+    let mut app = Application { instance };
 
     event_loop
         .run_app(&mut app)
@@ -73,10 +68,7 @@ where
         .context(WinitEventLoopSnafu)
 }
 
-async fn runtime(
-    mut commands: mpsc::Receiver<RuntimeCommand>,
-    _winit_commander: EventLoopProxy<WinitCommand>,
-) {
+async fn runtime(mut commands: mpsc::Receiver<RuntimeCommand>) {
     let mut windows = HashMap::new();
     while let Some(command) = commands.recv().await {
         match command {
@@ -111,6 +103,10 @@ enum WinitCommand {
         responder: oneshot::Sender<Result<Window>>,
         attributes: WindowAttributes,
     },
+    CreateWindowSurface {
+        responder: oneshot::Sender<Result<wgpu::Surface<'static>>>,
+        window: Arc<winit::window::Window>,
+    },
 }
 
 enum RuntimeCommand {
@@ -139,18 +135,16 @@ impl Window {
     pub async fn with_attributes(attributes: WindowAttributes) -> Result<Self> {
         let (responder, response) = oneshot::channel();
         context()
-            .winit_commander
-            .send_event(WinitCommand::CreateWindow {
+            .winit_command(WinitCommand::CreateWindow {
                 responder,
                 attributes,
             })
-            .map_err(|_| TwwError::EventLoopClosed)?;
-        response.await.map_err(|_| TwwError::TwwRuntimeClosed)?
+            .await;
+        response.await.expect("tww::runtime closed unexpectedly")
     }
 
     fn new_impl(
         responder: oneshot::Sender<Result<Window>>,
-        runtime_commander: &mpsc::Sender<RuntimeCommand>,
         event_loop: &ActiveEventLoop,
         attributes: WindowAttributes,
     ) {
@@ -161,9 +155,8 @@ impl Window {
             .map(Arc::new);
         match window {
             Ok(window) => {
-                runtime_commander
-                    .blocking_send(RuntimeCommand::RegisterWindow { responder, window })
-                    .expect("winit event loop running inside of async context");
+                context()
+                    .runtime_command_sync(RuntimeCommand::RegisterWindow { responder, window });
             }
             Err(e) => {
                 // We can ignore the error if the user has dropped their future.
@@ -172,35 +165,42 @@ impl Window {
         }
     }
 
+    async fn command(&self, command: WindowCommand) {
+        self.commander
+            .send(command)
+            .await
+            .expect("tww::WindowWorker not accepting commands");
+    }
+
     /// Request that the window be closed and wait for it to close.
     ///
     /// Returns any errors related to closing.
     pub async fn close(&self) -> Result<()> {
-        self.close_request().await?;
+        self.close_request().await;
         self.wait_close().await
     }
 
     /// Request that the window be closed without waiting.
     ///
-    /// Note that since you aren't waiting for the window to actually close that you won't receive any
-    /// errors related to winit's closing process.
-    ///
-    /// Returns an error only if the event loop is closed.
-    pub async fn close_request(&self) -> Result<()> {
-        self.commander
-            .send(WindowCommand::Close)
-            .await
-            .map_err(|_| TwwError::EventLoopClosed)
+    /// Note that since you aren't waiting for the window to actually close this returns without error.
+    pub async fn close_request(&self) {
+        self.command(WindowCommand::Close).await;
     }
 
     /// Wait for the window to close without requesting it to close.
     pub async fn wait_close(&self) -> Result<()> {
         let (responder, response) = oneshot::channel();
-        self.commander
-            .send(WindowCommand::WaitClose { responder })
+        self.command(WindowCommand::WaitClose { responder }).await;
+        response.await.expect("tww::runtime closed unexpectedly")
+    }
+
+    pub async fn create_surface(&self) -> Result<wgpu::Surface> {
+        let (responder, response) = oneshot::channel();
+        self.command(WindowCommand::CreateSurface { responder })
+            .await;
+        response
             .await
-            .map_err(|_| TwwError::EventLoopClosed)?;
-        response.await.map_err(|_| TwwError::TwwRuntimeClosed)?
+            .expect("winit event loop closed unexpectedly")
     }
 }
 
@@ -226,6 +226,14 @@ impl WindowWorker {
                         responder.send(result.clone()).ok();
                     }
                     break;
+                }
+                WindowCommand::CreateSurface { responder } => {
+                    context()
+                        .winit_command(WinitCommand::CreateWindowSurface {
+                            responder,
+                            window: self.window.clone(),
+                        })
+                        .await;
                 }
             }
         }
@@ -268,12 +276,13 @@ enum WindowCommand {
     ConfirmClosed {
         result: Result<()>,
     },
+    CreateSurface {
+        responder: oneshot::Sender<Result<wgpu::Surface<'static>>>,
+    },
 }
 
 struct Application {
-    #[allow(dead_code)]
     instance: wgpu::Instance,
-    runtime_commander: mpsc::Sender<RuntimeCommand>,
 }
 
 impl ApplicationHandler<WinitCommand> for Application {
@@ -293,12 +302,10 @@ impl ApplicationHandler<WinitCommand> for Application {
     ) {
         match event {
             WindowEvent::Destroyed => {
-                self.runtime_commander
-                    .blocking_send(RuntimeCommand::WindowClosed {
-                        window_id,
-                        result: Ok(()),
-                    })
-                    .expect("winit event loop running inside of async context");
+                context().runtime_command_sync(RuntimeCommand::WindowClosed {
+                    window_id,
+                    result: Ok(()),
+                });
             }
             _ => {}
         }
@@ -311,16 +318,45 @@ impl ApplicationHandler<WinitCommand> for Application {
                 attributes,
             } => {
                 // We can ignore the error if the user has dropped their future.
-                Window::new_impl(responder, &self.runtime_commander, event_loop, attributes);
+                Window::new_impl(responder, event_loop, attributes);
+            }
+            WinitCommand::CreateWindowSurface { responder, window } => {
+                let surface = self
+                    .instance
+                    .create_surface(window.clone())
+                    .context(CreateWindowSurfaceSnafu);
+                responder.send(surface).ok();
             }
         }
     }
 }
 
 struct RuntimeContext {
-    #[allow(dead_code)]
     runtime_commander: mpsc::Sender<RuntimeCommand>,
     winit_commander: EventLoopProxy<WinitCommand>,
+}
+
+impl RuntimeContext {
+    async fn _runtime_command(&self, command: RuntimeCommand) {
+        self.runtime_commander
+            .send(command)
+            .await
+            .expect("tww::runtime closed unexpectedly");
+    }
+
+    fn runtime_command_sync(&self, command: RuntimeCommand) {
+        // TODO: Have two separated expected() statements, one for each case, for clarity.
+        self.runtime_commander.blocking_send(command).expect(
+            "winit event loop running inside of async context or tww::runtime closed unexpectedly",
+        );
+    }
+
+    async fn winit_command(&self, command: WinitCommand) {
+        self.winit_commander
+            .send_event(command)
+            .ok()
+            .expect("winit event loop closed unexpectedly");
+    }
 }
 
 fn context() -> &'static RuntimeContext {
