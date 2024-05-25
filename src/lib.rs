@@ -1,6 +1,7 @@
+use core::fmt::Debug;
 use core::future::Future;
 use snafu::{ResultExt, Snafu};
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, fmt::Display, sync::Arc};
 use tokio::sync::{mpsc, oneshot, OnceCell};
 use winit::{
     application::ApplicationHandler,
@@ -14,27 +15,46 @@ const COMMAND_CHANNEL_DEPTH: usize = 64;
 
 static RUNTIME_CONTEXT: OnceCell<RuntimeContext> = OnceCell::const_new();
 
+#[derive(Debug, Snafu)]
+pub enum TwwFinishError<T, E>
+where
+    E: Display + Debug + std::error::Error + 'static,
+{
+    #[snafu(display("tww error: {source}"))]
+    Tww { source: TwwError },
+    #[snafu(display("winit event loop error: {source}"))]
+    WinitEventLoop {
+        source: Arc<EventLoopError>,
+        main_result: oneshot::Receiver<CoreResult<T, E>>,
+    },
+    #[snafu(display("user main error: {source}"))]
+    UserMainError { source: E },
+    #[snafu(display("user main panic"))]
+    UserMainPanic,
+}
+
 #[derive(Clone, Debug, Snafu)]
 pub enum TwwError {
     #[snafu(display("OS error: {source}"))]
     Os { source: Arc<OsError> },
     #[snafu(display("tww window closed"))]
     TwwWindowClosed,
-    #[snafu(display("winit event loop error: {source}"))]
-    WinitEventLoop { source: Arc<EventLoopError> },
     #[snafu(display("create window surface error: {source}"))]
     CreateWindowSurface { source: wgpu::CreateSurfaceError },
 }
-
-pub type Result<T> = core::result::Result<T, TwwError>;
+pub type CoreResult<T, E> = core::result::Result<T, E>;
+pub type Result<T> = CoreResult<T, TwwError>;
+pub type FinishResult<T, E> = CoreResult<T, TwwFinishError<T, E>>;
 
 /// This function does not return until the window closes and all resources are closed unless an error occurs during runtime.
 ///
 /// Pass in `main`, which will be spawned on the `tokio` runtime and act as your entry point.
-pub fn start<F>(instance: wgpu::Instance, main: F) -> Result<()>
+pub fn start<F, T, E>(instance: wgpu::Instance, main: F) -> FinishResult<T, E>
 where
-    F: Future + Send + 'static,
+    F: Future<Output = core::result::Result<T, E>> + Send + 'static,
     F::Output: Send + 'static,
+    T: Debug + 'static,
+    E: Display + Debug + std::error::Error + 'static,
 {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -57,15 +77,26 @@ where
         .ok()
         .expect("only call tww::start once");
 
+    let (return_tx, return_rx) = oneshot::channel();
     rt.spawn(runtime(runtime_commands));
-    rt.spawn(main);
+    rt.spawn(async move {
+        // Ignore error here because if winit event loop closes randomly we still return the receiver
+        // but the user may choose to throw it away and discard it.
+        return_tx.send(main.await).ok();
+    });
 
     let mut app = Application { instance };
 
-    event_loop
-        .run_app(&mut app)
-        .map_err(Arc::new)
-        .context(WinitEventLoopSnafu)
+    if let Err(e) = event_loop.run_app(&mut app).map_err(Arc::new) {
+        return Err(e).context(WinitEventLoopSnafu {
+            main_result: return_rx,
+        });
+    }
+
+    return_rx
+        .blocking_recv()
+        .map_err(|_| TwwFinishError::UserMainPanic)?
+        .context(UserMainSnafu)
 }
 
 async fn runtime(mut commands: mpsc::Receiver<RuntimeCommand>) {
