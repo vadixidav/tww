@@ -1,7 +1,7 @@
 use core::fmt::Debug;
 use core::future::Future;
 use snafu::{ResultExt, Snafu};
-use std::{collections::HashMap, fmt::Display, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{mpsc, oneshot, OnceCell};
 use winit::{
     application::ApplicationHandler,
@@ -18,7 +18,7 @@ static RUNTIME_CONTEXT: OnceCell<RuntimeContext> = OnceCell::const_new();
 #[derive(Debug, Snafu)]
 pub enum TwwFinishError<T, E>
 where
-    E: Display + Debug + std::error::Error + 'static,
+    E: std::error::Error + 'static,
 {
     #[snafu(display("tww error: {source}"))]
     Tww { source: TwwError },
@@ -42,6 +42,7 @@ pub enum TwwError {
     #[snafu(display("create window surface error: {source}"))]
     CreateWindowSurface { source: wgpu::CreateSurfaceError },
 }
+
 pub type CoreResult<T, E> = core::result::Result<T, E>;
 pub type Result<T> = CoreResult<T, TwwError>;
 pub type FinishResult<T, E> = CoreResult<T, TwwFinishError<T, E>>;
@@ -54,7 +55,7 @@ where
     F: Future<Output = core::result::Result<T, E>> + Send + 'static,
     F::Output: Send + 'static,
     T: Debug + 'static,
-    E: Display + Debug + std::error::Error + 'static,
+    E: std::error::Error + 'static,
 {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
