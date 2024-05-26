@@ -10,3 +10,8 @@ snafu = { version = "0.8.2", features = ["futures"] }
 tokio = { version = "1.37.0", features = ["macros", "rt-multi-thread", "sync"] }
 wgpu = "0.20.0"
 winit = "0.30.0"
+
+[dev-dependencies]
+bytemuck = { version = "1.16.0", default-features = false }
+nanorand = { version = "0.7.0", default-features = false, features = ["wyrand"] }
+pretty_env_logger = "0.5.0"

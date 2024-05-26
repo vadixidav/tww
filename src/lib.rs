@@ -202,7 +202,9 @@ impl Window {
             responder,
             attributes,
         });
-        response.await.expect("tww::runtime closed unexpectedly")
+        response
+            .await
+            .expect("winit event loop or tww::runtime closed unexpectedly")
     }
 
     fn new_winit(
@@ -400,11 +402,11 @@ struct Application {
 
 impl ApplicationHandler<WinitCommand> for Application {
     fn resumed(&mut self, _event_loop: &ActiveEventLoop) {
-        todo!()
+        todo!("resume not implemented");
     }
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
-        todo!()
+        todo!("suspended not implemented");
     }
 
     fn window_event(
