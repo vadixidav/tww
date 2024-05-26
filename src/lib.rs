@@ -256,12 +256,12 @@ impl Window {
     ///
     /// This is equivalent to:
     /// ```no_run
-    /// # tww::start::<_, (), tww::TwwError>(wgpu::Instance::new(wgpu::InstanceDescriptor::default()), async {
+    /// # tww::start_test(async {
     /// # let window = tww::Window::new().await?;
     /// window.close_request().await;
     /// window.wait_close().await;
-    /// # }).ok();
     /// # Ok(())
+    /// # });
     /// ```
     ///
     /// Returns any errors related to closing.
@@ -462,4 +462,13 @@ fn context() -> &'static RuntimeContext {
     RUNTIME_CONTEXT
         .get()
         .expect("you must call tww::start to run your application")
+}
+
+#[doc(hidden)]
+pub fn start_test(test: impl Future<Output = CoreResult<(), TwwError>> + Send + 'static) {
+    start::<_, (), TwwError>(
+        wgpu::Instance::new(wgpu::InstanceDescriptor::default()),
+        test,
+    )
+    .ok();
 }
