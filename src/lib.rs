@@ -8,6 +8,7 @@ use tokio::sync::{
 };
 use winit::{
     application::ApplicationHandler,
+    dpi::PhysicalSize,
     error::{EventLoopError, OsError},
     event::WindowEvent,
     event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy},
@@ -186,6 +187,7 @@ enum RuntimeCommand {
 #[derive(Clone)]
 pub struct Window {
     commander: mpsc::Sender<WindowCommand>,
+    window: Arc<winit::window::Window>,
     redraw_requested: Arc<Notify>,
 }
 
@@ -233,7 +235,7 @@ impl Window {
         tokio::spawn(
             WindowWorker {
                 commands,
-                window,
+                window: window.clone(),
                 redraw_requested: redraw_requested.clone(),
             }
             .task(),
@@ -241,6 +243,7 @@ impl Window {
         // We can ignore the error if the user has dropped their future.
         Window {
             redraw_requested,
+            window,
             commander,
         }
     }
@@ -301,6 +304,13 @@ impl Window {
     /// Wait until a redraw is requested for this window.
     pub async fn redraw_requested(&self) {
         self.redraw_requested.notified().await;
+    }
+
+    /// Get the pixel dimension of the inside of the window.
+    ///
+    /// See [`winit::window::Window::inner_size`].
+    pub fn inner_size(&self) -> PhysicalSize<u32> {
+        self.window.inner_size()
     }
 }
 
