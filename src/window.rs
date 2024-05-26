@@ -140,6 +140,20 @@ impl Window {
     }
 }
 
+pub(crate) enum WindowCommand {
+    Close,
+    WaitClose {
+        responder: oneshot::Sender<Result<()>>,
+    },
+    ConfirmClosed {
+        result: Result<()>,
+    },
+    CreateSurface {
+        responder: oneshot::Sender<Result<wgpu::Surface<'static>>>,
+    },
+    RedrawRequested,
+}
+
 struct WindowWorker {
     commands: mpsc::Receiver<WindowCommand>,
     window: Arc<winit::window::Window>,
@@ -204,18 +218,4 @@ impl WindowWorker {
             }
         }
     }
-}
-
-pub(crate) enum WindowCommand {
-    Close,
-    WaitClose {
-        responder: oneshot::Sender<Result<()>>,
-    },
-    ConfirmClosed {
-        result: Result<()>,
-    },
-    CreateSurface {
-        responder: oneshot::Sender<Result<wgpu::Surface<'static>>>,
-    },
-    RedrawRequested,
 }
