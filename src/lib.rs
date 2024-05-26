@@ -1,17 +1,16 @@
 mod runtime;
+mod twinit;
 mod window;
 
 use runtime::{RuntimeCommand, RuntimeWorker};
 use snafu::{ResultExt, Snafu};
 use std::{collections::HashMap, fmt::Debug, future::Future, sync::Arc};
 use tokio::sync::{mpsc, oneshot, OnceCell};
+use twinit::{Application, WinitCommand};
 pub use window::Window;
 use winit::{
-    application::ApplicationHandler,
     error::{EventLoopError, OsError},
-    event::WindowEvent,
-    event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy},
-    window::WindowAttributes,
+    event_loop::{EventLoop, EventLoopProxy},
 };
 
 const COMMAND_CHANNEL_DEPTH: usize = 64;
@@ -107,70 +106,6 @@ where
         .blocking_recv()
         .map_err(|_| TwwFinishError::UserMainPanic)?
         .context(UserMainSnafu)
-}
-
-enum WinitCommand {
-    CreateWindow {
-        responder: oneshot::Sender<Result<Window>>,
-        attributes: WindowAttributes,
-    },
-    CreateWindowSurface {
-        responder: oneshot::Sender<Result<wgpu::Surface<'static>>>,
-        window: Arc<winit::window::Window>,
-    },
-}
-
-struct Application {
-    instance: Arc<wgpu::Instance>,
-}
-
-impl ApplicationHandler<WinitCommand> for Application {
-    fn resumed(&mut self, _event_loop: &ActiveEventLoop) {
-        todo!("resume not implemented");
-    }
-
-    fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
-        todo!("suspended not implemented");
-    }
-
-    fn window_event(
-        &mut self,
-        _event_loop: &ActiveEventLoop,
-        window_id: winit::window::WindowId,
-        event: WindowEvent,
-    ) {
-        match event {
-            WindowEvent::Destroyed => {
-                context().runtime_command(RuntimeCommand::WindowClosed {
-                    window_id,
-                    result: Ok(()),
-                });
-            }
-            WindowEvent::RedrawRequested => {
-                context().runtime_command(RuntimeCommand::WindowRedrawRequested { window_id })
-            }
-            _ => {}
-        }
-    }
-
-    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: WinitCommand) {
-        match event {
-            WinitCommand::CreateWindow {
-                responder,
-                attributes,
-            } => {
-                // We can ignore the error if the user has dropped their future.
-                Window::new_winit(responder, event_loop, attributes);
-            }
-            WinitCommand::CreateWindowSurface { responder, window } => {
-                let surface = self
-                    .instance
-                    .create_surface(window.clone())
-                    .context(CreateWindowSurfaceSnafu);
-                responder.send(surface).ok();
-            }
-        }
-    }
 }
 
 struct RuntimeContext {

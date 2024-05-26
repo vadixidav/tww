@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, Notify};
 use winit::{dpi::PhysicalSize, event_loop::ActiveEventLoop, window::WindowAttributes};
 
-use crate::{context, OsSnafu, Result, RuntimeCommand, WinitCommand};
+use crate::{context, twinit::WinitCommand, OsSnafu, Result, RuntimeCommand};
 
 /// This wraps an operating system window.
 ///
