@@ -53,7 +53,7 @@ pub type FinishResult<T, E> = CoreResult<T, TwwFinishError<T, E>>;
 /// This function does not return until the window closes and all resources are closed unless an error occurs during runtime.
 ///
 /// Pass in `main`, which will be spawned on the `tokio` runtime and act as your entry point.
-pub fn start<F, T, E>(instance: wgpu::Instance, main: F) -> FinishResult<T, E>
+pub fn start<F, T, E>(instance: Arc<wgpu::Instance>, main: F) -> FinishResult<T, E>
 where
     F: Future<Output = CoreResult<T, E>> + Send + 'static,
     F::Output: Send + 'static,
@@ -385,7 +385,7 @@ enum WindowCommand {
 }
 
 struct Application {
-    instance: wgpu::Instance,
+    instance: Arc<wgpu::Instance>,
 }
 
 impl ApplicationHandler<WinitCommand> for Application {
@@ -467,7 +467,7 @@ fn context() -> &'static RuntimeContext {
 #[doc(hidden)]
 pub fn start_test(test: impl Future<Output = CoreResult<(), TwwError>> + Send + 'static) {
     start::<_, (), TwwError>(
-        wgpu::Instance::new(wgpu::InstanceDescriptor::default()),
+        Arc::new(wgpu::Instance::new(wgpu::InstanceDescriptor::default())),
         test,
     )
     .ok();
