@@ -2,7 +2,10 @@ use core::fmt::Debug;
 use core::future::Future;
 use snafu::{ResultExt, Snafu};
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::{mpsc, oneshot, OnceCell};
+use tokio::sync::{
+    mpsc::{self, WeakSender},
+    oneshot, Notify, OnceCell,
+};
 use winit::{
     application::ApplicationHandler,
     error::{EventLoopError, OsError},
@@ -52,7 +55,7 @@ pub type FinishResult<T, E> = CoreResult<T, TwwFinishError<T, E>>;
 /// Pass in `main`, which will be spawned on the `tokio` runtime and act as your entry point.
 pub fn start<F, T, E>(instance: wgpu::Instance, main: F) -> FinishResult<T, E>
 where
-    F: Future<Output = core::result::Result<T, E>> + Send + 'static,
+    F: Future<Output = CoreResult<T, E>> + Send + 'static,
     F::Output: Send + 'static,
     T: Debug + 'static,
     E: std::error::Error + 'static,
@@ -79,7 +82,13 @@ where
         .expect("only call tww::start once");
 
     let (return_tx, return_rx) = oneshot::channel();
-    rt.spawn(runtime(runtime_commands));
+    rt.spawn(
+        RuntimeWorker {
+            commands: runtime_commands,
+            windows: HashMap::new(),
+        }
+        .task(),
+    );
     rt.spawn(async move {
         // Ignore error here because if winit event loop closes randomly we still return the receiver
         // but the user may choose to throw it away and discard it.
@@ -100,32 +109,48 @@ where
         .context(UserMainSnafu)
 }
 
-async fn runtime(mut commands: mpsc::Receiver<RuntimeCommand>) {
-    let mut windows = HashMap::new();
-    while let Some(command) = commands.recv().await {
-        match command {
-            RuntimeCommand::RegisterWindow { responder, window } => {
-                let (commander, commands) = mpsc::channel(COMMAND_CHANNEL_DEPTH);
-                windows.insert(window.id(), commander.downgrade());
-                tokio::spawn(WindowWorker { commands, window }.task());
-                // We can ignore the error if the user has dropped their future.
-                responder.send(Ok(Window { commander })).ok();
-            }
-            RuntimeCommand::WindowClosed { window_id, result } => {
-                // Ignore send errors since the worker terminates if it is dropped.
-                if let Some(window_commander) = windows
-                    .get(&window_id)
-                    .expect("window cannot be closed if it was not registered")
-                    .upgrade()
-                {
-                    // If we can upgrade the sender then the window object still exists and we can inform it.
-                    window_commander
-                        .send(WindowCommand::ConfirmClosed { result })
-                        .await
+struct RuntimeWorker {
+    commands: mpsc::Receiver<RuntimeCommand>,
+    windows: HashMap<winit::window::WindowId, WeakSender<WindowCommand>>,
+}
+
+impl RuntimeWorker {
+    async fn task(mut self) {
+        while let Some(command) = self.commands.recv().await {
+            match command {
+                RuntimeCommand::RegisterWindow { responder, window } => {
+                    let (commander, commands) = mpsc::channel(COMMAND_CHANNEL_DEPTH);
+                    self.windows.insert(window.id(), commander.downgrade());
+                    // We can ignore the error if the user has dropped their future.
+                    responder
+                        .send(Ok(Window::new_runtime(commander, commands, window)))
                         .ok();
                 }
-                windows.remove(&window_id);
+                RuntimeCommand::WindowClosed { window_id, result } => {
+                    self.window_command(window_id, WindowCommand::ConfirmClosed { result })
+                        .await;
+                    self.windows.remove(&window_id);
+                }
+                RuntimeCommand::WindowRedrawRequested { window_id } => {
+                    self.window_command(window_id, WindowCommand::RedrawRequested)
+                        .await;
+                }
             }
+        }
+    }
+
+    async fn window_command(&self, id: winit::window::WindowId, command: WindowCommand) {
+        // If we can upgrade the sender then the window object still exists and we can inform it.
+        // If we can't upgrade the sender then the window object is gone so we can throw away the command
+        // as the window will be closed by winit shortly and then cleaned up by the runtime.
+        if let Some(window_commander) = self
+            .windows
+            .get(&id)
+            .expect("winit generated event for unknown window")
+            .upgrade()
+        {
+            // Ignore send errors since the worker terminates if it is dropped.
+            window_commander.send(command).await.ok();
         }
     }
 }
@@ -150,13 +175,18 @@ enum RuntimeCommand {
         window_id: winit::window::WindowId,
         result: Result<()>,
     },
+    WindowRedrawRequested {
+        window_id: winit::window::WindowId,
+    },
 }
 
 /// This wraps an operating system window.
 ///
 /// When dropped, the window closes with eventual consistency. Call [`Window::close`] to asynchronously wait on window closure.
+#[derive(Clone)]
 pub struct Window {
     commander: mpsc::Sender<WindowCommand>,
+    redraw_requested: Arc<Notify>,
 }
 
 impl Window {
@@ -173,7 +203,7 @@ impl Window {
         response.await.expect("tww::runtime closed unexpectedly")
     }
 
-    fn new_impl(
+    fn new_winit(
         responder: oneshot::Sender<Result<Window>>,
         event_loop: &ActiveEventLoop,
         attributes: WindowAttributes,
@@ -194,6 +224,27 @@ impl Window {
         }
     }
 
+    fn new_runtime(
+        commander: mpsc::Sender<WindowCommand>,
+        commands: mpsc::Receiver<WindowCommand>,
+        window: Arc<winit::window::Window>,
+    ) -> Window {
+        let redraw_requested = Arc::new(Notify::new());
+        tokio::spawn(
+            WindowWorker {
+                commands,
+                window,
+                redraw_requested: redraw_requested.clone(),
+            }
+            .task(),
+        );
+        // We can ignore the error if the user has dropped their future.
+        Window {
+            redraw_requested,
+            commander,
+        }
+    }
+
     async fn command(&self, command: WindowCommand) {
         self.commander
             .send(command)
@@ -201,7 +252,17 @@ impl Window {
             .expect("tww::WindowWorker not accepting commands");
     }
 
-    /// Request that the window be closed and wait for it to close.
+    /// Close the window and wait for it to close.
+    ///
+    /// This is equivalent to:
+    /// ```no_run
+    /// # tww::start::<_, (), tww::TwwError>(wgpu::Instance::new(wgpu::InstanceDescriptor::default()), async {
+    /// # let window = tww::Window::new().await?;
+    /// window.close_request().await;
+    /// window.wait_close().await;
+    /// # }).ok();
+    /// # Ok(())
+    /// ```
     ///
     /// Returns any errors related to closing.
     pub async fn close(&self) -> Result<()> {
@@ -209,20 +270,25 @@ impl Window {
         self.wait_close().await
     }
 
-    /// Request that the window be closed without waiting.
+    /// Request that the window be closed.
     ///
-    /// Note that since you aren't waiting for the window to actually close this returns without error.
+    /// This does not wait for the window to be closed, only requests that it be closed.
     pub async fn close_request(&self) {
         self.command(WindowCommand::Close).await;
     }
 
-    /// Wait for the window to close without requesting it to close.
+    /// Wait for the window to close.
+    ///
+    /// This does not request that the window be closed, only waits for it to be closed.
+    ///
+    /// Returns any errors related to closing.
     pub async fn wait_close(&self) -> Result<()> {
         let (responder, response) = oneshot::channel();
         self.command(WindowCommand::WaitClose { responder }).await;
         response.await.expect("tww::runtime closed unexpectedly")
     }
 
+    /// Creates a [`wgpu::Surface`] for this window.
     pub async fn create_surface(&self) -> Result<wgpu::Surface> {
         let (responder, response) = oneshot::channel();
         self.command(WindowCommand::CreateSurface { responder })
@@ -231,11 +297,17 @@ impl Window {
             .await
             .expect("winit event loop closed unexpectedly")
     }
+
+    /// Wait until a redraw is requested for this window.
+    pub async fn redraw_requested(&self) {
+        self.redraw_requested.notified().await;
+    }
 }
 
 struct WindowWorker {
     commands: mpsc::Receiver<WindowCommand>,
     window: Arc<winit::window::Window>,
+    redraw_requested: Arc<Notify>,
 }
 
 impl WindowWorker {
@@ -261,6 +333,9 @@ impl WindowWorker {
                         responder,
                         window: self.window.clone(),
                     });
+                }
+                WindowCommand::RedrawRequested => {
+                    self.redraw_requested.notify_one();
                 }
             }
         }
@@ -306,6 +381,7 @@ enum WindowCommand {
     CreateSurface {
         responder: oneshot::Sender<Result<wgpu::Surface<'static>>>,
     },
+    RedrawRequested,
 }
 
 struct Application {
@@ -334,6 +410,9 @@ impl ApplicationHandler<WinitCommand> for Application {
                     result: Ok(()),
                 });
             }
+            WindowEvent::RedrawRequested => {
+                context().runtime_command(RuntimeCommand::WindowRedrawRequested { window_id })
+            }
             _ => {}
         }
     }
@@ -345,7 +424,7 @@ impl ApplicationHandler<WinitCommand> for Application {
                 attributes,
             } => {
                 // We can ignore the error if the user has dropped their future.
-                Window::new_impl(responder, event_loop, attributes);
+                Window::new_winit(responder, event_loop, attributes);
             }
             WinitCommand::CreateWindowSurface { responder, window } => {
                 let surface = self
