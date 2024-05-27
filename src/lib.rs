@@ -124,6 +124,14 @@ impl LifecycleWatcher {
         Self { subscription }
     }
 
+    /// The current [`tww::LifecycleStage`] of the application.
+    ///
+    /// Calling this does not mark the last stage transition as seen for the purposes of other methods.
+    /// If you are trying to determine if the lifecycle changed or entered some state, use the other methods.
+    pub fn lifecycle(&self) -> LifecycleStage {
+        *self.subscription.borrow()
+    }
+
     /// Returns any [`tww::LifecycleStage`] that has been set which was not previously seen by this watcher.
     ///
     /// This function guarantees that you will be notified even if the same [`tww::LifecycleStage`] is set twice.
