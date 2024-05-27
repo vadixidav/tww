@@ -1,5 +1,5 @@
-use crate::runtime::RuntimeCommand;
 use crate::window::Window;
+use crate::{runtime::RuntimeCommand, LifecycleStage};
 use snafu::ResultExt;
 use std::sync::Arc;
 use tokio::sync::oneshot;
@@ -27,11 +27,11 @@ pub(crate) struct Application {
 
 impl ApplicationHandler<WinitCommand> for Application {
     fn resumed(&mut self, _event_loop: &ActiveEventLoop) {
-        todo!("resume not implemented");
+        context().lifecycle.send_replace(LifecycleStage::Rendering);
     }
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
-        todo!("suspended not implemented");
+        context().lifecycle.send_replace(LifecycleStage::Background);
     }
 
     fn window_event(

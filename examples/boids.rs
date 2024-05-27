@@ -27,12 +27,17 @@ pub fn main() -> tww::FinishResult<(), tww::TwwError> {
 }
 
 pub async fn run(instance: Arc<wgpu::Instance>) -> Result<()> {
+    let mut lifecycle = tww::LifecycleWatcher::new();
+
+    // Wait for the rendering stage, at which point we can create windows.
+    lifecycle.rendering().await;
+
+    // Create the window and retrieve its surface.
     let window = tww::Window::new().await?;
     let surface = window.create_surface().await?;
 
-    log::trace!("RootCore::renderer");
-
-    log::info!("acquiring adapter");
+    // Acquire the adapter.
+    log::trace!("acquiring adapter");
     let adapter = wgpu::util::initialize_adapter_from_env_or_default(&instance, Some(&surface))
         .await
         .expect("could not select an adapter");
@@ -43,7 +48,7 @@ pub async fn run(instance: Arc<wgpu::Instance>) -> Result<()> {
         adapter_info.backend
     );
 
-    log::info!("checking adapter features for compatibility");
+    log::trace!("checking adapter features for compatibility");
     // TODO: What features are required?
     let minimum_features = wgpu::Features::empty();
     let adapter_features = adapter.features();
@@ -53,7 +58,7 @@ pub async fn run(instance: Arc<wgpu::Instance>) -> Result<()> {
         minimum_features - adapter_features
     );
 
-    log::info!("checking adapter capabilities for compatibility");
+    log::trace!("checking adapter capabilities for compatibility");
     let required_downlevel_capabilities = wgpu::DownlevelCapabilities {
         flags: wgpu::DownlevelFlags::COMPUTE_SHADERS,
         ..Default::default()
@@ -72,7 +77,7 @@ pub async fn run(instance: Arc<wgpu::Instance>) -> Result<()> {
         required_downlevel_capabilities.flags - downlevel_capabilities.flags
     );
 
-    log::info!("acquiring device");
+    log::trace!("acquiring device");
     // Make sure we use the texture resolution limits from the adapter, so we can support images the size of the surface.
     let required_limits = wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits());
     // TODO: Which features are optional?
@@ -88,14 +93,13 @@ pub async fn run(instance: Arc<wgpu::Instance>) -> Result<()> {
         )
         .await
         .expect("could not find a suitable GPU device");
-    log::info!("device acquired");
 
-    log::info!("configure window surface");
+    log::trace!("configure window surface");
     let window_size = window.inner_size();
-    log::info!("window size found to be {window_size:?}");
+    log::info!("window size in pixels: {window_size:?}");
     let width = window_size.width.max(1);
     let height = window_size.height.max(1);
-    // Get the default configuration,
+    // Get the default configuration.
     let mut surface_config = surface
         .get_default_config(&adapter, width, height)
         .expect("surface isn't supported by the adapter");
@@ -104,9 +108,8 @@ pub async fn run(instance: Arc<wgpu::Instance>) -> Result<()> {
     surface_config.format = format;
     surface_config.view_formats.push(format);
     surface.configure(&device, &surface_config);
-    log::info!("window surface configured");
 
-    // TODO: maybe somehow window.request_redraw();
+    // TODO: maybe window.request_redraw();
 
     let compute_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: None,

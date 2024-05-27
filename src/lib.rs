@@ -5,7 +5,7 @@ mod window;
 use runtime::{RuntimeCommand, RuntimeWorker};
 use snafu::{ResultExt, Snafu};
 use std::{collections::HashMap, fmt::Debug, future::Future, sync::Arc};
-use tokio::sync::{mpsc, oneshot, OnceCell};
+use tokio::sync::{mpsc, oneshot, watch, OnceCell};
 use twinit::{Application, WinitCommand};
 pub use window::Window;
 use winit::{
@@ -15,7 +15,7 @@ use winit::{
 
 const COMMAND_CHANNEL_DEPTH: usize = 64;
 
-static RUNTIME_CONTEXT: OnceCell<RuntimeContext> = OnceCell::const_new();
+static RUNTIME_CONTEXT: OnceCell<TwwContext> = OnceCell::const_new();
 
 #[derive(Debug, Snafu)]
 pub enum TwwFinishError<T, E>
@@ -73,9 +73,10 @@ where
     let winit_commander = event_loop.create_proxy();
 
     RUNTIME_CONTEXT
-        .set(RuntimeContext {
+        .set(TwwContext {
             runtime_commander,
             winit_commander,
+            lifecycle: watch::Sender::new(LifecycleStage::Background),
         })
         .ok()
         .expect("only call tww::start once");
@@ -108,12 +109,96 @@ where
         .context(UserMainSnafu)
 }
 
-struct RuntimeContext {
-    runtime_commander: mpsc::Sender<RuntimeCommand>,
-    winit_commander: EventLoopProxy<WinitCommand>,
+pub struct LifecycleWatcher {
+    subscription: watch::Receiver<LifecycleStage>,
 }
 
-impl RuntimeContext {
+impl LifecycleWatcher {
+    /// Creates a new LifecycleWatcher.
+    pub fn new() -> Self {
+        let mut subscription = context().lifecycle.subscribe();
+        // Force the consumer to retrieve the next matching lifecycle event. This is important because
+        // changes can happen prior to the application starting.
+        subscription.mark_changed();
+        Self { subscription }
+    }
+
+    /// Returns any [`tww::LifecycleStage`] that has been set which was not previously seen by this watcher.
+    ///
+    /// This function guarantees that you will be notified even if the same [`tww::LifecycleStage`] is set twice.
+    /// This is important since every time [`tww::LifecycleStage::Rendering`] is entered, you must
+    /// recreate your rendering resources, such as surfaces.
+    ///
+    /// See [`tww::LifecycleStage`] for more details.
+    pub async fn lifecycle(&mut self) -> LifecycleStage {
+        self.subscription
+            .changed()
+            .await
+            .expect("tww::context cannot be destroyed");
+        *self.subscription.borrow_and_update()
+    }
+
+    /// Returns when the specified [`tww::LifecycleStage`] is entered.
+    ///
+    /// This function guarantees that you will be notified if the requested stage is updated before you begin
+    /// listening to avoid missing any stage updates. This is important since every time
+    /// [`tww::LifecycleStage::Rendering`] is entered, you must recreate your rendering resources, such as surfaces.
+    ///
+    /// See [`tww::LifecycleStage`] for more details.
+    pub async fn wait_for(&mut self, stage: LifecycleStage) {
+        self.subscription
+            .wait_for(move |&new_stage| new_stage == stage)
+            .await
+            .expect("tww::context cannot be destroyed");
+    }
+
+    /// Waits for the application to be ready for rendering.
+    ///
+    /// This is shorthand for `self.wait_for(LifecycleStage::Rendering)`.
+    pub async fn rendering(&mut self) {
+        self.wait_for(LifecycleStage::Rendering).await;
+    }
+
+    /// Waits for the application to enter the background.
+    ///
+    /// This is shorthand for `self.wait_for(LifecycleStage::Background)`.
+    pub async fn background(&mut self) {
+        self.wait_for(LifecycleStage::Background).await;
+    }
+}
+
+/// Describes the current stage of the application lifecycle your application is currently in.
+///
+/// ## Rendering
+///
+/// In this stage you may create new windows, get window surfaces, and broadly use graphics libraries
+/// to perform rendering. Whenever this stage is entered for any reason, any surfaces must be re-created
+/// using [`tww::Window::create_surface`]. The async/await APIs provided to retrieve the lifecycle will notify you
+/// if you get two back-to-back rendering lifecycle updates, which can happen if you miss a background update.
+///
+/// ## Background
+///
+/// In this stage you should cease rendering, as the results are not currently being displayed. It is also recommended
+/// to prepare in case the application may be shut down by saving any data with the assumption that your application
+/// could be terminated at any time without any warning by the platform. Certain platforms may broadly guarantee
+/// under typical conditions that your application will go into this background stage before being closed, but
+/// this is not true on all platforms. If you intend to support all platforms, you should ensure data is always saved.
+///
+/// Note that being in the background stage of the lifecycle does not mean that you are minimized. A minimized
+/// application is still expected to render frames regardless.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum LifecycleStage {
+    Rendering,
+    Background,
+}
+
+struct TwwContext {
+    runtime_commander: mpsc::Sender<RuntimeCommand>,
+    winit_commander: EventLoopProxy<WinitCommand>,
+    lifecycle: watch::Sender<LifecycleStage>,
+}
+
+impl TwwContext {
     fn runtime_command(&self, command: RuntimeCommand) {
         // TODO: Have two separated expected() statements, one for each case, for clarity.
         self.runtime_commander.blocking_send(command).expect(
@@ -129,7 +214,7 @@ impl RuntimeContext {
     }
 }
 
-fn context() -> &'static RuntimeContext {
+fn context() -> &'static TwwContext {
     RUNTIME_CONTEXT
         .get()
         .expect("you must call tww::start to run your application")
