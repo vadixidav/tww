@@ -1,9 +1,9 @@
+use crate::{context, twinit::WinitCommand, OsSnafu, Result, RuntimeCommand};
+use futures::FutureExt;
 use snafu::ResultExt;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, Notify};
 use winit::{dpi::PhysicalSize, event_loop::ActiveEventLoop, window::WindowAttributes};
-
-use crate::{context, twinit::WinitCommand, OsSnafu, Result, RuntimeCommand};
 
 /// This wraps an operating system window.
 ///
@@ -128,8 +128,15 @@ impl Window {
     }
 
     /// Wait until a redraw is requested for this window.
-    pub async fn redraw_requested(&self) {
+    pub async fn wait_redraw_requested(&self) {
         self.redraw_requested.notified().await;
+    }
+
+    /// Check if a redraw is requested for this window.
+    ///
+    /// If this returns `true` it wont return `true` again until another redraw is requested.
+    pub fn is_redraw_requested(&self) -> bool {
+        self.redraw_requested.notified().now_or_never().is_some()
     }
 
     /// Get the pixel dimension of the inside of the window.

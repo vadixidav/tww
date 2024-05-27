@@ -2,6 +2,7 @@ mod runtime;
 mod twinit;
 mod window;
 
+use futures::FutureExt;
 use runtime::{RuntimeCommand, RuntimeWorker};
 use snafu::{ResultExt, Snafu};
 use std::{collections::HashMap, fmt::Debug, future::Future, sync::Arc};
@@ -130,12 +131,27 @@ impl LifecycleWatcher {
     /// recreate your rendering resources, such as surfaces.
     ///
     /// See [`tww::LifecycleStage`] for more details.
-    pub async fn lifecycle(&mut self) -> LifecycleStage {
+    pub async fn wait_lifecycle(&mut self) -> LifecycleStage {
         self.subscription
             .changed()
             .await
             .expect("tww::context cannot be destroyed");
         *self.subscription.borrow_and_update()
+    }
+
+    /// Returns a [`tww::LifecycleStage`] if it was not previously seen by this watcher.
+    ///
+    /// This function guarantees that you will be notified even if the same [`tww::LifecycleStage`] is set twice.
+    /// This is important since every time [`tww::LifecycleStage::Rendering`] is entered, you must
+    /// recreate your rendering resources, such as surfaces.
+    ///
+    /// See [`tww::LifecycleStage`] for more details.
+    pub fn entered_lifecycle(&mut self) -> Option<LifecycleStage> {
+        self.subscription
+            .changed()
+            .now_or_never()?
+            .expect("tww::context cannot be destroyed");
+        Some(*self.subscription.borrow_and_update())
     }
 
     /// Returns when the specified [`tww::LifecycleStage`] is entered.
@@ -145,25 +161,54 @@ impl LifecycleWatcher {
     /// [`tww::LifecycleStage::Rendering`] is entered, you must recreate your rendering resources, such as surfaces.
     ///
     /// See [`tww::LifecycleStage`] for more details.
-    pub async fn wait_for(&mut self, stage: LifecycleStage) {
+    pub async fn wait_stage(&mut self, stage: LifecycleStage) {
         self.subscription
             .wait_for(move |&new_stage| new_stage == stage)
             .await
             .expect("tww::context cannot be destroyed");
     }
 
-    /// Waits for the application to be ready for rendering.
+    /// Returns `true` if the specified [`tww::LifecycleStage`] is entered.
     ///
-    /// This is shorthand for `self.wait_for(LifecycleStage::Rendering)`.
-    pub async fn rendering(&mut self) {
-        self.wait_for(LifecycleStage::Rendering).await;
+    /// This function guarantees that you will be notified if the requested stage is updated before you begin
+    /// listening to avoid missing any stage updates. This is important since every time
+    /// [`tww::LifecycleStage::Rendering`] is entered, you must recreate your rendering resources, such as surfaces.
+    ///
+    /// See [`tww::LifecycleStage`] for more details.
+    pub fn entered_stage(&mut self, stage: LifecycleStage) -> bool {
+        self.subscription
+            .wait_for(move |&new_stage| new_stage == stage)
+            .now_or_never()
+            .map(|r| r.expect("tww::context cannot be destroyed"))
+            .is_some()
     }
 
-    /// Waits for the application to enter the background.
+    /// Waits for the application to enter the rendering stage.
     ///
-    /// This is shorthand for `self.wait_for(LifecycleStage::Background)`.
-    pub async fn background(&mut self) {
-        self.wait_for(LifecycleStage::Background).await;
+    /// This is shorthand for `self.wait_stage(LifecycleStage::Rendering)`.
+    pub async fn wait_rendering(&mut self) {
+        self.wait_stage(LifecycleStage::Rendering).await;
+    }
+
+    /// Returns `true` if the application entered the rendering stage.
+    ///
+    /// This is shorthand for `self.entered_stage(LifecycleStage::Rendering)`.
+    pub fn entered_rendering(&mut self) -> bool {
+        self.entered_stage(LifecycleStage::Rendering)
+    }
+
+    /// Waits for the application to enter the background stage.
+    ///
+    /// This is shorthand for `self.wait_stage(LifecycleStage::Background)`.
+    pub async fn wait_background(&mut self) {
+        self.wait_stage(LifecycleStage::Background).await;
+    }
+
+    /// Returns `true` if the application entered the background stage.
+    ///
+    /// This is shorthand for `self.endered_stage(LifecycleStage::Background)`.
+    pub fn entered_background(&mut self) -> bool {
+        self.entered_stage(LifecycleStage::Background)
     }
 }
 

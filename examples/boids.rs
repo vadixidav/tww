@@ -30,7 +30,7 @@ pub async fn run(instance: Arc<wgpu::Instance>) -> Result<()> {
     let mut lifecycle = tww::LifecycleWatcher::new();
 
     // Wait for the rendering stage, at which point we can create windows.
-    lifecycle.rendering().await;
+    lifecycle.wait_rendering().await;
 
     // Create the window and retrieve its surface.
     let window = tww::Window::new().await?;
@@ -302,6 +302,9 @@ pub async fn run(instance: Arc<wgpu::Instance>) -> Result<()> {
     let mut frame_num = 0usize;
 
     loop {
+        // Wait for the window to require a redraw.
+        window.wait_redraw_requested().await;
+
         frame_num += 1;
         let frame = match surface.get_current_texture() {
             Ok(frame) => frame,
@@ -381,8 +384,5 @@ pub async fn run(instance: Arc<wgpu::Instance>) -> Result<()> {
 
         // done
         queue.submit(Some(command_encoder.finish()));
-
-        window.redraw_requested().await;
-        // Draw to texture?
     }
 }
