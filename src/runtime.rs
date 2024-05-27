@@ -12,12 +12,9 @@ pub enum RuntimeCommand {
         responder: oneshot::Sender<Result<Window>>,
         window: Arc<winit::window::Window>,
     },
-    WindowClosed {
+    WindowCommand {
         window_id: winit::window::WindowId,
-        result: Result<()>,
-    },
-    WindowRedrawRequested {
-        window_id: winit::window::WindowId,
+        command: WindowCommand,
     },
 }
 
@@ -38,14 +35,15 @@ impl RuntimeWorker {
                         .send(Ok(Window::new_runtime(commander, commands, window)))
                         .ok();
                 }
-                RuntimeCommand::WindowClosed { window_id, result } => {
-                    self.window_command(window_id, WindowCommand::ConfirmClosed { result })
-                        .await;
+                RuntimeCommand::WindowCommand {
+                    window_id,
+                    command: command @ WindowCommand::ConfirmClosed { .. },
+                } => {
+                    self.window_command(window_id, command).await;
                     self.windows.remove(&window_id);
                 }
-                RuntimeCommand::WindowRedrawRequested { window_id } => {
-                    self.window_command(window_id, WindowCommand::RedrawRequested)
-                        .await;
+                RuntimeCommand::WindowCommand { window_id, command } => {
+                    self.window_command(window_id, command).await;
                 }
             }
         }

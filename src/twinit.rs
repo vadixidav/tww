@@ -1,5 +1,5 @@
-use crate::window::Window;
-use crate::{runtime::RuntimeCommand, LifecycleStage};
+use crate::window::{Window, WindowCommand};
+use crate::LifecycleStage;
 use snafu::ResultExt;
 use std::sync::Arc;
 use tokio::sync::oneshot;
@@ -42,13 +42,14 @@ impl ApplicationHandler<WinitCommand> for Application {
     ) {
         match event {
             WindowEvent::Destroyed => {
-                context().runtime_command(RuntimeCommand::WindowClosed {
-                    window_id,
-                    result: Ok(()),
-                });
+                context()
+                    .window_command(window_id, WindowCommand::ConfirmClosed { result: Ok(()) });
             }
             WindowEvent::RedrawRequested => {
-                context().runtime_command(RuntimeCommand::WindowRedrawRequested { window_id })
+                context().window_command(window_id, WindowCommand::RedrawRequested);
+            }
+            WindowEvent::Resized(dimensions) => {
+                context().window_command(window_id, WindowCommand::UpdateDimensions { dimensions });
             }
             _ => {}
         }

@@ -9,6 +9,7 @@ use std::{collections::HashMap, fmt::Debug, future::Future, sync::Arc};
 use tokio::sync::{mpsc, oneshot, watch, OnceCell};
 use twinit::{Application, WinitCommand};
 pub use window::Window;
+use window::WindowCommand;
 use winit::{
     error::{EventLoopError, OsError},
     event_loop::{EventLoop, EventLoopProxy},
@@ -115,7 +116,7 @@ pub struct LifecycleWatcher {
 }
 
 impl LifecycleWatcher {
-    /// Creates a new LifecycleWatcher.
+    /// Creates a new [`tww::LifecycleWatcher`]`.
     pub fn new() -> Self {
         let mut subscription = context().lifecycle.subscribe();
         // Force the consumer to retrieve the next matching lifecycle event. This is important because
@@ -126,10 +127,10 @@ impl LifecycleWatcher {
 
     /// The current [`tww::LifecycleStage`] of the application.
     ///
-    /// Calling this does not mark the last stage transition as seen for the purposes of other methods.
+    /// Calling this marks the last stage transition as seen for the purposes of other methods.
     /// If you are trying to determine if the lifecycle changed or entered some state, use the other methods.
-    pub fn lifecycle(&self) -> LifecycleStage {
-        *self.subscription.borrow()
+    pub fn lifecycle(&mut self) -> LifecycleStage {
+        *self.subscription.borrow_and_update()
     }
 
     /// Returns any [`tww::LifecycleStage`] that has been set which was not previously seen by this watcher.
@@ -264,6 +265,10 @@ impl TwwContext {
             .send_event(command)
             .ok()
             .expect("winit event loop closed unexpectedly");
+    }
+
+    fn window_command(&self, window_id: winit::window::WindowId, command: WindowCommand) {
+        self.runtime_command(RuntimeCommand::WindowCommand { window_id, command });
     }
 }
 

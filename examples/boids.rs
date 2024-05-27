@@ -34,6 +34,7 @@ pub async fn run(instance: Arc<wgpu::Instance>) -> Result<()> {
 
     // Create the window and retrieve its surface.
     let window = tww::Window::new().await?;
+    let mut dimensions_watcher = window.dimensions_watcher();
     let surface = window.create_surface().await?;
 
     // Acquire the adapter.
@@ -95,7 +96,7 @@ pub async fn run(instance: Arc<wgpu::Instance>) -> Result<()> {
         .expect("could not find a suitable GPU device");
 
     log::trace!("configure window surface");
-    let window_size = window.inner_size();
+    let window_size = dimensions_watcher.dimensions();
     log::info!("window size in pixels: {window_size:?}");
     let width = window_size.width.max(1);
     let height = window_size.height.max(1);

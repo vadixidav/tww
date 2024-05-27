@@ -1,8 +1,8 @@
-use crate::{context, twinit::WinitCommand, OsSnafu, Result, RuntimeCommand};
+use crate::{context, twinit::WinitCommand, OsSnafu, Result, RuntimeCommand, TwwError};
 use futures::FutureExt;
 use snafu::ResultExt;
 use std::sync::Arc;
-use tokio::sync::{mpsc, oneshot, Notify};
+use tokio::sync::{mpsc, oneshot, watch, Notify};
 use winit::{dpi::PhysicalSize, event_loop::ActiveEventLoop, window::WindowAttributes};
 
 /// This wraps an operating system window.
@@ -13,6 +13,7 @@ pub struct Window {
     commander: mpsc::Sender<WindowCommand>,
     window: Arc<winit::window::Window>,
     redraw_requested: Arc<Notify>,
+    dimensions: watch::Sender<PhysicalSize<u32>>,
 }
 
 impl Window {
@@ -58,19 +59,23 @@ impl Window {
         window: Arc<winit::window::Window>,
     ) -> Window {
         let redraw_requested = Arc::new(Notify::new());
+        let dimensions = watch::Sender::new(window.inner_size());
+
         tokio::spawn(
             WindowWorker {
                 commands,
                 window: window.clone(),
                 redraw_requested: redraw_requested.clone(),
+                dimensions: dimensions.clone(),
             }
             .task(),
         );
-        // We can ignore the error if the user has dropped their future.
+
         Window {
             redraw_requested,
             window,
             commander,
+            dimensions,
         }
     }
 
@@ -142,8 +147,17 @@ impl Window {
     /// Get the pixel dimension of the inside of the window.
     ///
     /// See [`winit::window::Window::inner_size`].
-    pub fn inner_size(&self) -> PhysicalSize<u32> {
+    pub fn dimensions(&self) -> PhysicalSize<u32> {
         self.window.inner_size()
+    }
+
+    /// Get a watcher to listen for changes to window dimensions.
+    pub fn dimensions_watcher(&self) -> WindowDimensionsWatcher {
+        let mut subscription = self.dimensions.subscribe();
+        // Force the consumer to retrieve the currently set size. This is important because
+        // changes can happen prior to the application starting.
+        subscription.mark_changed();
+        WindowDimensionsWatcher { subscription }
     }
 }
 
@@ -159,12 +173,16 @@ pub(crate) enum WindowCommand {
         responder: oneshot::Sender<Result<wgpu::Surface<'static>>>,
     },
     RedrawRequested,
+    UpdateDimensions {
+        dimensions: PhysicalSize<u32>,
+    },
 }
 
 struct WindowWorker {
     commands: mpsc::Receiver<WindowCommand>,
     window: Arc<winit::window::Window>,
     redraw_requested: Arc<Notify>,
+    dimensions: watch::Sender<PhysicalSize<u32>>,
 }
 
 impl WindowWorker {
@@ -193,6 +211,17 @@ impl WindowWorker {
                 }
                 WindowCommand::RedrawRequested => {
                     self.redraw_requested.notify_one();
+                }
+                WindowCommand::UpdateDimensions { dimensions } => {
+                    // Dimensions updates where the dimensions are unchanged are spurious.
+                    self.dimensions.send_if_modified(|current_dimensions| {
+                        if *current_dimensions != dimensions {
+                            *current_dimensions = dimensions;
+                            true
+                        } else {
+                            false
+                        }
+                    });
                 }
             }
         }
@@ -224,5 +253,43 @@ impl WindowWorker {
                 }
             }
         }
+    }
+}
+
+pub struct WindowDimensionsWatcher {
+    subscription: watch::Receiver<PhysicalSize<u32>>,
+}
+
+impl WindowDimensionsWatcher {
+    /// The current inner dimensions of the window.
+    ///
+    /// Calling this marks the current dimensions as seen for the purposes of other methods.
+    /// If you are trying to determine if the dimensions changed to update your textures, use the other methods.
+    pub fn dimensions(&mut self) -> PhysicalSize<u32> {
+        *self.subscription.borrow_and_update()
+    }
+
+    /// Returns any change to the inner dimensions of the window.
+    ///
+    /// [`tww::TwwError::TwwWindowClosed`] is returned if the window has been closed.
+    pub async fn wait_dimensions(&mut self) -> Result<PhysicalSize<u32>> {
+        self.subscription
+            .changed()
+            .await
+            .map_err(|_| TwwError::TwwWindowClosed)?;
+        Ok(*self.subscription.borrow_and_update())
+    }
+
+    /// Returns updated window dimensions if they have changed.
+    ///
+    /// [`tww::TwwError::TwwWindowClosed`] is returned if the window has been closed.
+    pub fn changed_dimensions(&mut self) -> Result<Option<PhysicalSize<u32>>> {
+        Ok(self
+            .subscription
+            .changed()
+            .now_or_never()
+            .transpose()
+            .map_err(|_| TwwError::TwwWindowClosed)?
+            .map(|_| *self.subscription.borrow_and_update()))
     }
 }
