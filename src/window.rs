@@ -92,7 +92,7 @@ impl Window {
     /// ```no_run
     /// # tww::start_test(async {
     /// # let window = tww::Window::new().await?;
-    /// window.close_request().await;
+    /// window.close_no_wait().await;
     /// window.wait_close().await;
     /// # Ok(())
     /// # });
@@ -100,14 +100,14 @@ impl Window {
     ///
     /// Returns any errors related to closing.
     pub async fn close(&self) -> Result<()> {
-        self.close_request().await;
+        self.close_no_wait().await;
         self.wait_close().await
     }
 
     /// Request that the window be closed.
     ///
     /// This does not wait for the window to be closed, only requests that it be closed.
-    pub async fn close_request(&self) {
+    pub async fn close_no_wait(&self) {
         self.command(WindowCommand::Close).await;
     }
 
@@ -130,6 +130,19 @@ impl Window {
         response
             .await
             .expect("winit event loop closed unexpectedly")
+    }
+
+    /// Ask the window to redraw and wait until it is ready to be redrawn.
+    pub async fn redraw(&self) {
+        self.window.request_redraw();
+        self.wait_redraw_requested().await;
+    }
+
+    /// Ask the window to redraw.
+    ///
+    /// This doesn't mean the window is ready for you to redraw yet, which you can wait on with [`wait_redraw_requested`].
+    pub fn redraw_no_wait(&self) {
+        self.window.request_redraw();
     }
 
     /// Wait until a redraw is requested for this window.
