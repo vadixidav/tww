@@ -1,13 +1,10 @@
 use ahash::{HashSet, HashSetExt};
 use egui::{TexturesDelta, ViewportId};
 use egui_winit::ActionRequested;
-use std::{num::NonZeroU32, sync::Arc};
+use std::sync::Arc;
 use winit::dpi::PhysicalSize;
 
-use crate::{
-    window::{WindowDimensionsWatcher, WindowEventListener},
-    Window,
-};
+use crate::{window::WindowEventListener, Window};
 
 pub struct EguiRenderer {
     window: Window,

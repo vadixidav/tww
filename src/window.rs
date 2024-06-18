@@ -21,6 +21,7 @@ pub struct Window {
     pub(crate) window: Arc<winit::window::Window>,
     redraw_requested: Arc<Notify>,
     dimensions: watch::Sender<PhysicalSize<u32>>,
+    close_requested: watch::Sender<bool>,
     keyboard_events: broadcast::Sender<KeyEvent>,
     window_events: broadcast::Sender<winit::event::WindowEvent>,
 }
@@ -81,6 +82,7 @@ impl Window {
     ) -> Window {
         let redraw_requested = Arc::new(Notify::new());
         let dimensions = watch::Sender::new(window.inner_size());
+        let close_requested = watch::Sender::new(false);
         let keyboard_events = broadcast::Sender::new(COMMAND_CHANNEL_DEPTH);
         let window_events = broadcast::Sender::new(COMMAND_CHANNEL_DEPTH);
 
@@ -90,6 +92,7 @@ impl Window {
                 window: window.clone(),
                 redraw_requested: redraw_requested.clone(),
                 dimensions: dimensions.clone(),
+                close_requested: close_requested.clone(),
                 keyboard_events: keyboard_events.clone(),
                 window_events: window_events.clone(),
             }
@@ -101,6 +104,7 @@ impl Window {
             window,
             commander,
             dimensions,
+            close_requested,
             keyboard_events,
             window_events,
         }
@@ -230,6 +234,12 @@ impl Window {
         WindowDimensionsWatcher { subscription }
     }
 
+    /// Waits until a close is requested.
+    pub async fn wait_close_requested(&self) {
+        let mut subscription = self.close_requested.subscribe();
+        subscription.wait_for(|&c| c).await.ok();
+    }
+
     /// Listen to window keyboard events.
     pub fn keyboard_listener(&self) -> WindowKeyboardListener {
         WindowKeyboardListener {
@@ -266,6 +276,7 @@ struct WindowWorker {
     window: Arc<winit::window::Window>,
     redraw_requested: Arc<Notify>,
     dimensions: watch::Sender<PhysicalSize<u32>>,
+    close_requested: watch::Sender<bool>,
     keyboard_events: broadcast::Sender<KeyEvent>,
     window_events: broadcast::Sender<winit::event::WindowEvent>,
 }
@@ -313,6 +324,9 @@ impl WindowWorker {
                         }
                         WindowEvent::KeyboardInput { event, .. } => {
                             self.keyboard_events.send(event).ok();
+                        }
+                        WindowEvent::CloseRequested => {
+                            self.close_requested.send_replace(true);
                         }
                         _ => {}
                     }
