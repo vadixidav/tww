@@ -17,7 +17,7 @@ use winit::{
     event_loop::{EventLoop, EventLoopProxy},
 };
 
-pub use egui::Ui;
+pub use egui;
 
 const COMMAND_CHANNEL_DEPTH: usize = 64;
 
