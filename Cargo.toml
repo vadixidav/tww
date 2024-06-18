@@ -11,9 +11,7 @@ futures = { version = "0.3.30", default-features = false, features = [
 log = "0.4.21"
 snafu = { version = "0.8.2", features = ["futures"] }
 tokio = { version = "1.37.0", features = ["macros", "rt-multi-thread", "sync"] }
-wgpu = { version = "0.20.0", default-features = false, features = [
-    "vulkan-portability",
-] }
+wgpu = { version = "0.20.0", default-features = false }
 winit = "0.30.0"
 egui-winit = { git = "https://github.com/vadixidav/egui.git", branch = "allow-external" }
 egui-wgpu = { git = "https://github.com/vadixidav/egui.git", branch = "allow-external", features = [
@@ -30,3 +28,6 @@ nanorand = { version = "0.7.0", default-features = false, features = [
     "wyrand",
 ] }
 pretty_env_logger = "0.5.0"
+wgpu = { version = "0.20.0", default-features = false, features = [
+    "vulkan-portability",
+] }
