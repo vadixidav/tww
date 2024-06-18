@@ -17,6 +17,8 @@ use winit::{
     event_loop::{EventLoop, EventLoopProxy},
 };
 
+pub use egui::Ui;
+
 const COMMAND_CHANNEL_DEPTH: usize = 64;
 
 static RUNTIME_CONTEXT: OnceCell<TwwContext> = OnceCell::const_new();
