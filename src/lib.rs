@@ -103,6 +103,8 @@ where
             // Ignore error here because if winit event loop closes randomly we still return the receiver
             // but the user may choose to throw it away and discard it.
             return_tx.send(main(instance).await).ok();
+            // Tell the event loop it is time to exit.
+            context().winit_command(WinitCommand::Terminate);
         }
     });
 

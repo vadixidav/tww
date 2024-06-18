@@ -19,6 +19,7 @@ pub(crate) enum WinitCommand {
         responder: oneshot::Sender<Result<wgpu::Surface<'static>>>,
         window: Arc<winit::window::Window>,
     },
+    Terminate,
 }
 
 pub(crate) struct Application {
@@ -73,6 +74,9 @@ impl ApplicationHandler<WinitCommand> for Application {
                     .create_surface(window.clone())
                     .context(CreateWindowSurfaceSnafu);
                 responder.send(surface).ok();
+            }
+            WinitCommand::Terminate => {
+                event_loop.exit();
             }
         }
     }

@@ -370,4 +370,13 @@ impl WindowKeyboardListener {
     pub fn event(&mut self) -> Option<KeyEvent> {
         self.subscription.try_recv().ok()
     }
+
+    /// Waits for a [`winit::event::KeyEvent`].
+    pub async fn wait_event(&mut self) -> KeyEvent {
+        loop {
+            if let Some(event) = self.subscription.recv().await.ok() {
+                return event;
+            }
+        }
+    }
 }

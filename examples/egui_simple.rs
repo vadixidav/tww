@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use futures::FutureExt;
 use tww::Result;
+use winit::keyboard::{Key, NamedKey};
 
 pub fn main() -> tww::FinishResult<(), tww::TwwError> {
     pretty_env_logger::init();
@@ -26,6 +27,7 @@ pub async fn run(instance: Arc<wgpu::Instance>) -> Result<()> {
     // Create the window and retrieve its surface.
     let window = tww::Window::new().await?;
     let mut dimensions_watcher = window.dimensions_watcher();
+    let mut keyboard_listener = window.keyboard_listener();
     let surface = window.create_surface().await?;
 
     // Acquire the adapter.
@@ -122,6 +124,11 @@ pub async fn run(instance: Arc<wgpu::Instance>) -> Result<()> {
                 egui_renderer =
                     window.create_egui_renderer(device.clone(), queue.clone(), target_format, wgpu::Color::GREEN, None);
                 log::info!("resized");
+            }
+            event = keyboard_listener.wait_event().fuse() => {
+                if event.logical_key == Key::Named(NamedKey::Escape) {
+                    return Ok(());
+                }
             }
             _ = window.redraw().fuse() => {
                 egui_renderer.ui(|ctx| {

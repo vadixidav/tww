@@ -303,12 +303,16 @@ impl EguiRenderer {
             );
         }
 
-        let encoded = encoder.finish();
+        for id in &self.textures_delta.free {
+            self.render.free_texture(id);
+        }
 
-        // Submit the commands: both the main buffer and user-defined ones.
+        let encoded = encoder.finish();
 
         self.queue
             .submit(user_cmd_bufs.into_iter().chain([encoded]));
+
+        output_frame.present();
 
         Ok(())
     }
