@@ -51,6 +51,9 @@ impl ApplicationHandler<WinitCommand> for Application {
             WindowEvent::Resized(dimensions) => {
                 context().window_command(window_id, WindowCommand::UpdateDimensions { dimensions });
             }
+            WindowEvent::KeyboardInput { event, .. } => {
+                context().window_command(window_id, WindowCommand::KeyboardInput { event });
+            }
             _ => {}
         }
     }

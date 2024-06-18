@@ -1,4 +1,5 @@
 mod runtime;
+mod tegui;
 mod twinit;
 mod window;
 
@@ -10,6 +11,7 @@ use tokio::sync::{mpsc, oneshot, watch, OnceCell};
 use twinit::{Application, WinitCommand};
 pub use window::Window;
 use window::WindowCommand;
+pub use winit::window::WindowAttributes;
 use winit::{
     error::{EventLoopError, OsError},
     event_loop::{EventLoop, EventLoopProxy},
@@ -54,13 +56,17 @@ pub type FinishResult<T, E> = CoreResult<T, TwwFinishError<T, E>>;
 /// This function does not return until the window closes and all resources are closed unless an error occurs during runtime.
 ///
 /// Pass in `main`, which will be spawned on the `tokio` runtime and act as your entry point.
-pub fn start<F, T, E>(instance: Arc<wgpu::Instance>, main: F) -> FinishResult<T, E>
+pub fn start<F, T, E>(
+    instance: impl Into<Arc<wgpu::Instance>>,
+    main: impl FnOnce(Arc<wgpu::Instance>) -> F + Send + 'static,
+) -> FinishResult<T, E>
 where
     F: Future<Output = CoreResult<T, E>> + Send + 'static,
     F::Output: Send + 'static,
     T: Debug + 'static,
     E: std::error::Error + 'static,
 {
+    let instance = instance.into();
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -91,10 +97,13 @@ where
         }
         .task(),
     );
-    rt.spawn(async move {
-        // Ignore error here because if winit event loop closes randomly we still return the receiver
-        // but the user may choose to throw it away and discard it.
-        return_tx.send(main.await).ok();
+    rt.spawn({
+        let instance = instance.clone();
+        async move {
+            // Ignore error here because if winit event loop closes randomly we still return the receiver
+            // but the user may choose to throw it away and discard it.
+            return_tx.send(main(instance).await).ok();
+        }
     });
 
     let mut app = Application { instance };
@@ -281,8 +290,8 @@ fn context() -> &'static TwwContext {
 #[doc(hidden)]
 pub fn start_test(test: impl Future<Output = CoreResult<(), TwwError>> + Send + 'static) {
     start::<_, (), TwwError>(
-        Arc::new(wgpu::Instance::new(wgpu::InstanceDescriptor::default())),
-        test,
+        wgpu::Instance::new(wgpu::InstanceDescriptor::default()),
+        move |_| test,
     )
     .ok();
 }

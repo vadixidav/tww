@@ -1,7 +1,7 @@
 //! This is based on the `boids` example from `wgpu`. Credit to https://github.com/gfx-rs/wgpu authors.
 
 // Flocking boids example with gpu compute update pass
-// adapted from https://github.com/austinEng/webgpu-samples/blob/master/src/examples/computeBoids.ts
+// adapted from https://github.com/gfx-rs/wgpu/tree/trunk/examples/src/boids
 
 use std::{borrow::Cow, mem, sync::Arc};
 
@@ -15,23 +15,18 @@ const PARTICLES_PER_GROUP: u32 = 64;
 pub fn main() -> tww::FinishResult<(), tww::TwwError> {
     pretty_env_logger::init();
 
-    let instance = Arc::new(wgpu::Instance::new(wgpu::InstanceDescriptor {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::util::backend_bits_from_env().unwrap_or_default(),
         flags: wgpu::InstanceFlags::from_build_config().with_env(),
         dx12_shader_compiler: wgpu::util::dx12_shader_compiler_from_env().unwrap_or_default(),
         gles_minor_version: wgpu::util::gles_minor_version_from_env().unwrap_or_default(),
-    }));
+    });
 
-    tww::start(instance.clone(), run(instance))?;
+    tww::start(instance, run)?;
     Ok(())
 }
 
 pub async fn run(instance: Arc<wgpu::Instance>) -> Result<()> {
-    let mut lifecycle = tww::LifecycleWatcher::new();
-
-    // Wait for the rendering stage, at which point we can create windows.
-    lifecycle.wait_rendering().await;
-
     // Create the window and retrieve its surface.
     let window = tww::Window::new().await?;
     let mut dimensions_watcher = window.dimensions_watcher();
@@ -217,7 +212,7 @@ pub async fn run(instance: Arc<wgpu::Instance>) -> Result<()> {
             module: &draw_shader,
             entry_point: "main_fs",
             compilation_options: Default::default(),
-            targets: &[Some(surface_config.view_formats[0].into())],
+            targets: &[Some(format.into())],
         }),
         primitive: wgpu::PrimitiveState::default(),
         depth_stencil: None,

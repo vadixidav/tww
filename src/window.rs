@@ -1,9 +1,12 @@
-use crate::{context, twinit::WinitCommand, OsSnafu, Result, RuntimeCommand, TwwError};
+use crate::{
+    context, tegui::EguiRenderer, twinit::WinitCommand, LifecycleWatcher, OsSnafu, Result,
+    RuntimeCommand, TwwError, WindowAttributes, COMMAND_CHANNEL_DEPTH,
+};
 use futures::FutureExt;
 use snafu::ResultExt;
 use std::sync::Arc;
-use tokio::sync::{mpsc, oneshot, watch, Notify};
-use winit::{dpi::PhysicalSize, event_loop::ActiveEventLoop, window::WindowAttributes};
+use tokio::sync::{broadcast, mpsc, oneshot, watch, Notify};
+use winit::{dpi::PhysicalSize, event::KeyEvent, event_loop::ActiveEventLoop};
 
 /// This wraps an operating system window.
 ///
@@ -11,16 +14,29 @@ use winit::{dpi::PhysicalSize, event_loop::ActiveEventLoop, window::WindowAttrib
 #[derive(Clone)]
 pub struct Window {
     commander: mpsc::Sender<WindowCommand>,
-    window: Arc<winit::window::Window>,
+    pub(crate) window: Arc<winit::window::Window>,
     redraw_requested: Arc<Notify>,
     dimensions: watch::Sender<PhysicalSize<u32>>,
+    keyboard_events: broadcast::Sender<KeyEvent>,
 }
 
 impl Window {
+    /// Opens a window.
+    ///
+    /// This will wait until entering the rendering lifecycle stage before opening the window.
     pub async fn new() -> Result<Self> {
+        LifecycleWatcher::new()
+            .wait_stage(crate::LifecycleStage::Rendering)
+            .await;
+        Self::new_ignore_lifecycle().await
+    }
+
+    /// Opens a window assuming we are in the rendering lifecycle stage.
+    pub async fn new_ignore_lifecycle() -> Result<Self> {
         Self::with_attributes(WindowAttributes::default()).await
     }
 
+    /// Opens a window assuming we are in the rendering lifecycle stage with specific attributes.
     pub async fn with_attributes(attributes: WindowAttributes) -> Result<Self> {
         let (responder, response) = oneshot::channel();
         context().winit_command(WinitCommand::CreateWindow {
@@ -60,6 +76,7 @@ impl Window {
     ) -> Window {
         let redraw_requested = Arc::new(Notify::new());
         let dimensions = watch::Sender::new(window.inner_size());
+        let keyboard_events = broadcast::Sender::new(COMMAND_CHANNEL_DEPTH);
 
         tokio::spawn(
             WindowWorker {
@@ -67,6 +84,7 @@ impl Window {
                 window: window.clone(),
                 redraw_requested: redraw_requested.clone(),
                 dimensions: dimensions.clone(),
+                keyboard_events: keyboard_events.clone(),
             }
             .task(),
         );
@@ -76,6 +94,7 @@ impl Window {
             window,
             commander,
             dimensions,
+            keyboard_events,
         }
     }
 
@@ -132,6 +151,27 @@ impl Window {
             .expect("winit event loop closed unexpectedly")
     }
 
+    /// Create an [`EguiRenderer`].
+    ///
+    /// This lets you render frames with egui onto the window surface.
+    pub fn create_egui_renderer(
+        &self,
+        device: Arc<wgpu::Device>,
+        queue: Arc<wgpu::Queue>,
+        target_format: wgpu::TextureFormat,
+        clear_color: wgpu::Color,
+        depth_format: Option<wgpu::TextureFormat>,
+    ) -> EguiRenderer {
+        EguiRenderer::new(
+            self,
+            device,
+            queue,
+            target_format,
+            clear_color,
+            depth_format,
+        )
+    }
+
     /// Ask the window to redraw and wait until it is ready to be redrawn.
     pub async fn redraw(&self) {
         self.window.request_redraw();
@@ -164,13 +204,20 @@ impl Window {
         self.window.inner_size()
     }
 
-    /// Get a watcher to listen for changes to window dimensions.
+    /// Watch for changes to window dimensions.
     pub fn dimensions_watcher(&self) -> WindowDimensionsWatcher {
         let mut subscription = self.dimensions.subscribe();
         // Force the consumer to retrieve the currently set size. This is important because
         // changes can happen prior to the application starting.
         subscription.mark_changed();
         WindowDimensionsWatcher { subscription }
+    }
+
+    /// Listen to window keyboard events.
+    pub fn keyboard_listener(&self) -> WindowKeyboardListener {
+        WindowKeyboardListener {
+            subscription: self.keyboard_events.subscribe(),
+        }
     }
 }
 
@@ -189,6 +236,9 @@ pub(crate) enum WindowCommand {
     UpdateDimensions {
         dimensions: PhysicalSize<u32>,
     },
+    KeyboardInput {
+        event: KeyEvent,
+    },
 }
 
 struct WindowWorker {
@@ -196,6 +246,7 @@ struct WindowWorker {
     window: Arc<winit::window::Window>,
     redraw_requested: Arc<Notify>,
     dimensions: watch::Sender<PhysicalSize<u32>>,
+    keyboard_events: broadcast::Sender<KeyEvent>,
 }
 
 impl WindowWorker {
@@ -235,6 +286,9 @@ impl WindowWorker {
                             false
                         }
                     });
+                }
+                WindowCommand::KeyboardInput { event } => {
+                    self.keyboard_events.send(event).ok();
                 }
             }
         }
@@ -304,5 +358,16 @@ impl WindowDimensionsWatcher {
             .transpose()
             .map_err(|_| TwwError::TwwWindowClosed)?
             .map(|_| *self.subscription.borrow_and_update()))
+    }
+}
+
+pub struct WindowKeyboardListener {
+    subscription: broadcast::Receiver<KeyEvent>,
+}
+
+impl WindowKeyboardListener {
+    /// Returns a [`winit::event::KeyEvent`] if a new one is available, consuming it.
+    pub fn event(&mut self) -> Option<KeyEvent> {
+        self.subscription.try_recv().ok()
     }
 }
