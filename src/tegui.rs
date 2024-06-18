@@ -98,7 +98,6 @@ impl EguiRenderer {
             .winit_state
             .egui_ctx()
             .tessellate(full_output.shapes, full_output.pixels_per_point);
-        log::info!("pixels per point: {}", full_output.pixels_per_point);
 
         // Append texture deltas.
         self.textures_delta.append(full_output.textures_delta);
@@ -249,11 +248,6 @@ impl EguiRenderer {
 
         // Upload all resources for the GPU.
         let viewport = self.winit_state.egui_input().viewport();
-        log::info!("viewport size: {:?}", viewport.inner_rect.unwrap());
-        log::info!(
-            "viewport ppp: {:?}",
-            viewport.native_pixels_per_point.unwrap()
-        );
         let dimensions = self.window.dimensions();
         let screen_descriptor = egui_wgpu::ScreenDescriptor {
             size_in_pixels: [dimensions.width, dimensions.height],
