@@ -4,15 +4,18 @@ use egui_winit::ActionRequested;
 use std::{num::NonZeroU32, sync::Arc};
 use winit::dpi::PhysicalSize;
 
-use crate::{window::WindowKeyboardListener, Window};
+use crate::{
+    window::{WindowDimensionsWatcher, WindowEventListener},
+    Window,
+};
 
 pub struct EguiRenderer {
-    winit_window: Arc<winit::window::Window>,
+    window: Window,
     device: Arc<wgpu::Device>,
     queue: Arc<wgpu::Queue>,
     clear_color: wgpu::Color,
     render: egui_wgpu::Renderer,
-    keyboard: WindowKeyboardListener,
+    window_events: WindowEventListener,
     clipped_primitives: Vec<egui::ClippedPrimitive>,
     winit_state: egui_winit::State,
     textures_delta: TexturesDelta,
@@ -27,10 +30,11 @@ impl EguiRenderer {
         clear_color: wgpu::Color,
         depth_format: Option<wgpu::TextureFormat>,
     ) -> Self {
+        let window = window.clone();
         let winit_window = window.window.clone();
         let render = egui_wgpu::Renderer::new(&device, target_format, depth_format, 1);
         let egui_context = egui::Context::default();
-        let keyboard = window.keyboard_listener();
+        let window_events = window.window_listener();
         let clipped_primitives = vec![];
         let winit_state = egui_winit::State::new(
             egui_context,
@@ -41,12 +45,12 @@ impl EguiRenderer {
         );
 
         let mut egui_renderer = Self {
-            winit_window,
+            window,
             device,
             queue,
             clear_color,
             render,
-            keyboard,
+            window_events,
             clipped_primitives,
             winit_state,
             textures_delta: TexturesDelta::default(),
@@ -62,7 +66,7 @@ impl EguiRenderer {
         egui_winit::update_viewport_info(
             &mut viewport_info,
             self.winit_state.egui_ctx(),
-            &*self.winit_window,
+            &*self.window.window,
             init,
         );
         self.winit_state
@@ -72,19 +76,29 @@ impl EguiRenderer {
     }
 
     pub fn ui(&mut self, run_ui: impl FnOnce(&egui::Context)) {
+        while let Some(event) = self.window_events.event() {
+            if self
+                .winit_state
+                .on_window_event(&self.window.window, &event)
+                .repaint
+            {
+                self.window.redraw_no_wait();
+            }
+        }
         self.update_viewport(false);
-        let raw_input = self.winit_state.take_egui_input(&self.winit_window);
+        let raw_input = self.winit_state.take_egui_input(&self.window.window);
         let full_output = self.winit_state.egui_ctx().run(raw_input, run_ui);
 
         // Handle platform output.
         self.winit_state
-            .handle_platform_output(&self.winit_window, full_output.platform_output);
+            .handle_platform_output(&self.window.window, full_output.platform_output);
 
         // UI output tesselation.
         self.clipped_primitives = self
             .winit_state
             .egui_ctx()
             .tessellate(full_output.shapes, full_output.pixels_per_point);
+        log::info!("pixels per point: {}", full_output.pixels_per_point);
 
         // Append texture deltas.
         self.textures_delta.append(full_output.textures_delta);
@@ -95,8 +109,6 @@ impl EguiRenderer {
             full_output.viewport_output.into_iter().next().unwrap();
         assert_eq!(viewport_id, ViewportId::ROOT);
 
-        let old_inner_size = self.winit_window.inner_size();
-
         // TODO: Cut, copy, paste, and, screenshot action requests need to be added.
         let mut actions_requested = HashSet::new();
         let mut viewport_info = self.winit_state.egui_input().viewport().clone();
@@ -104,7 +116,7 @@ impl EguiRenderer {
             self.winit_state.egui_ctx(),
             &mut viewport_info,
             viewport_output.commands,
-            &*self.winit_window,
+            &*self.window.window,
             true,
             &mut actions_requested,
         );
@@ -144,21 +156,7 @@ impl EguiRenderer {
             }
         }
 
-        // For Wayland : https://github.com/emilk/egui/issues/4196
-        if cfg!(target_os = "linux") {
-            let new_inner_size = self.winit_window.inner_size();
-            if new_inner_size != old_inner_size {
-                if let (Some(_width), Some(_height)) = (
-                    NonZeroU32::new(new_inner_size.width),
-                    NonZeroU32::new(new_inner_size.height),
-                ) {
-                    // painter.on_window_resized(viewport_id, width, height);
-                    // TODO: We probably don't need to do this since resizing will trigger an event that gets propogated back to us.
-                }
-            }
-        }
-
-        self.winit_window.set_visible(true);
+        // self.window.window.set_visible(true);
     }
 
     pub async fn resized(&mut self, dimensions: PhysicalSize<u32>) {
@@ -251,11 +249,14 @@ impl EguiRenderer {
 
         // Upload all resources for the GPU.
         let viewport = self.winit_state.egui_input().viewport();
+        log::info!("viewport size: {:?}", viewport.inner_rect.unwrap());
+        log::info!(
+            "viewport ppp: {:?}",
+            viewport.native_pixels_per_point.unwrap()
+        );
+        let dimensions = self.window.dimensions();
         let screen_descriptor = egui_wgpu::ScreenDescriptor {
-            size_in_pixels: [
-                viewport.inner_rect.unwrap().width() as u32,
-                viewport.inner_rect.unwrap().height() as u32,
-            ],
+            size_in_pixels: [dimensions.width, dimensions.height],
             pixels_per_point: viewport.native_pixels_per_point.unwrap(),
         };
 

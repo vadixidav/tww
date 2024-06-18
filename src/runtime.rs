@@ -37,7 +37,10 @@ impl RuntimeWorker {
                 }
                 RuntimeCommand::WindowCommand {
                     window_id,
-                    command: command @ WindowCommand::ConfirmClosed { .. },
+                    command:
+                        command @ WindowCommand::WinitWindowEvent {
+                            event: winit::event::WindowEvent::Destroyed,
+                        },
                 } => {
                     self.window_command(window_id, command).await;
                     self.windows.remove(&window_id);

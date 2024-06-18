@@ -97,7 +97,7 @@ where
         }
         .task(),
     );
-    rt.spawn({
+    let main_handle = rt.spawn({
         let instance = instance.clone();
         async move {
             // Ignore error here because if winit event loop closes randomly we still return the receiver
@@ -106,6 +106,10 @@ where
             // Tell the event loop it is time to exit.
             context().winit_command(WinitCommand::Terminate);
         }
+    });
+    rt.spawn(async move {
+        main_handle.await.ok();
+        context().winit_command(WinitCommand::Terminate);
     });
 
     let mut app = Application { instance };

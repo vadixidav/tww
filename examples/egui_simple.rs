@@ -5,6 +5,7 @@
 
 use std::sync::Arc;
 
+use egui::Rect;
 use futures::FutureExt;
 use tww::Result;
 use winit::keyboard::{Key, NamedKey};
@@ -92,7 +93,7 @@ pub async fn run(instance: Arc<wgpu::Instance>) -> Result<()> {
     let queue = Arc::new(queue);
 
     log::trace!("configure window surface");
-    let window_size = dimensions_watcher.dimensions();
+    let window_size: winit::dpi::PhysicalSize<u32> = dimensions_watcher.dimensions();
     log::info!("window size in pixels: {window_size:?}");
     let width = window_size.width.max(1);
     let height = window_size.height.max(1);
@@ -121,6 +122,7 @@ pub async fn run(instance: Arc<wgpu::Instance>) -> Result<()> {
                 surface_config.width = dimensions.width.max(1);
                 surface_config.height = dimensions.height.max(1);
                 surface.configure(&device, &surface_config);
+                drop(egui_renderer);
                 egui_renderer =
                     window.create_egui_renderer(device.clone(), queue.clone(), target_format, wgpu::Color::GREEN, None);
                 log::info!("resized");
@@ -132,12 +134,7 @@ pub async fn run(instance: Arc<wgpu::Instance>) -> Result<()> {
             }
             _ = window.redraw().fuse() => {
                 egui_renderer.ui(|ctx| {
-                    egui::CentralPanel::default().show(&ctx, |ui| {
-                        ui.label("Hello world!");
-                        if ui.button("Click me").clicked() {
-                            log::info!("clicked");
-                        }
-                    });
+                    egui::CentralPanel::default().show(&ctx, ui);
                 });
                 if let Err(e) = egui_renderer.render(&surface, None) {
                     log::error!("error: {e}");
@@ -145,4 +142,14 @@ pub async fn run(instance: Arc<wgpu::Instance>) -> Result<()> {
             }
         );
     }
+}
+
+fn ui(ui: &mut egui::Ui) {
+    log::info!("size: {}", ui.available_size());
+    ui.horizontal(|ui| {
+        ui.label("Hello world!");
+        if ui.button("Click me").clicked() {
+            log::info!("clicked");
+        }
+    });
 }

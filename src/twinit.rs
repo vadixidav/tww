@@ -41,22 +41,12 @@ impl ApplicationHandler<WinitCommand> for Application {
         window_id: winit::window::WindowId,
         event: WindowEvent,
     ) {
-        match event {
-            WindowEvent::Destroyed => {
-                context()
-                    .window_command(window_id, WindowCommand::ConfirmClosed { result: Ok(()) });
-            }
-            WindowEvent::RedrawRequested => {
-                context().window_command(window_id, WindowCommand::RedrawRequested);
-            }
-            WindowEvent::Resized(dimensions) => {
-                context().window_command(window_id, WindowCommand::UpdateDimensions { dimensions });
-            }
-            WindowEvent::KeyboardInput { event, .. } => {
-                context().window_command(window_id, WindowCommand::KeyboardInput { event });
-            }
-            _ => {}
-        }
+        context().window_command(
+            window_id,
+            WindowCommand::WinitWindowEvent {
+                event: event.clone(),
+            },
+        );
     }
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: WinitCommand) {

@@ -6,7 +6,11 @@ use futures::FutureExt;
 use snafu::ResultExt;
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, oneshot, watch, Notify};
-use winit::{dpi::PhysicalSize, event::KeyEvent, event_loop::ActiveEventLoop};
+use winit::{
+    dpi::{LogicalSize, PhysicalSize},
+    event::KeyEvent,
+    event_loop::ActiveEventLoop,
+};
 
 /// This wraps an operating system window.
 ///
@@ -18,6 +22,7 @@ pub struct Window {
     redraw_requested: Arc<Notify>,
     dimensions: watch::Sender<PhysicalSize<u32>>,
     keyboard_events: broadcast::Sender<KeyEvent>,
+    window_events: broadcast::Sender<winit::event::WindowEvent>,
 }
 
 impl Window {
@@ -77,6 +82,7 @@ impl Window {
         let redraw_requested = Arc::new(Notify::new());
         let dimensions = watch::Sender::new(window.inner_size());
         let keyboard_events = broadcast::Sender::new(COMMAND_CHANNEL_DEPTH);
+        let window_events = broadcast::Sender::new(COMMAND_CHANNEL_DEPTH);
 
         tokio::spawn(
             WindowWorker {
@@ -85,6 +91,7 @@ impl Window {
                 redraw_requested: redraw_requested.clone(),
                 dimensions: dimensions.clone(),
                 keyboard_events: keyboard_events.clone(),
+                window_events: window_events.clone(),
             }
             .task(),
         );
@@ -95,6 +102,7 @@ impl Window {
             commander,
             dimensions,
             keyboard_events,
+            window_events,
         }
     }
 
@@ -204,6 +212,15 @@ impl Window {
         self.window.inner_size()
     }
 
+    /// Get the size of the inside of the window.
+    ///
+    /// See [`winit::window::Window::inner_size`].
+    pub fn size(&self) -> LogicalSize<u32> {
+        self.window
+            .inner_size()
+            .to_logical(self.window.scale_factor())
+    }
+
     /// Watch for changes to window dimensions.
     pub fn dimensions_watcher(&self) -> WindowDimensionsWatcher {
         let mut subscription = self.dimensions.subscribe();
@@ -219,6 +236,16 @@ impl Window {
             subscription: self.keyboard_events.subscribe(),
         }
     }
+
+    /// Listen to all window events.
+    ///
+    /// It is not recommended to use this directly and to instead use listeners for the data you are interested in.
+    /// This is useful for implementing support for things which directly tie into winit.
+    pub fn window_listener(&self) -> WindowEventListener {
+        WindowEventListener {
+            subscription: self.window_events.subscribe(),
+        }
+    }
 }
 
 pub(crate) enum WindowCommand {
@@ -226,18 +253,11 @@ pub(crate) enum WindowCommand {
     WaitClose {
         responder: oneshot::Sender<Result<()>>,
     },
-    ConfirmClosed {
-        result: Result<()>,
-    },
     CreateSurface {
         responder: oneshot::Sender<Result<wgpu::Surface<'static>>>,
     },
-    RedrawRequested,
-    UpdateDimensions {
-        dimensions: PhysicalSize<u32>,
-    },
-    KeyboardInput {
-        event: KeyEvent,
+    WinitWindowEvent {
+        event: winit::event::WindowEvent,
     },
 }
 
@@ -247,6 +267,7 @@ struct WindowWorker {
     redraw_requested: Arc<Notify>,
     dimensions: watch::Sender<PhysicalSize<u32>>,
     keyboard_events: broadcast::Sender<KeyEvent>,
+    window_events: broadcast::Sender<winit::event::WindowEvent>,
 }
 
 impl WindowWorker {
@@ -259,36 +280,43 @@ impl WindowWorker {
                 WindowCommand::WaitClose { responder } => {
                     close_responders.push(responder);
                 }
-                WindowCommand::ConfirmClosed { result } => {
-                    close_result = Some(result.clone());
-                    for responder in close_responders.drain(..) {
-                        // We can ignore the error if the user has dropped their future.
-                        responder.send(result.clone()).ok();
-                    }
-                    break;
-                }
                 WindowCommand::CreateSurface { responder } => {
                     context().winit_command(WinitCommand::CreateWindowSurface {
                         responder,
                         window: self.window.clone(),
                     });
                 }
-                WindowCommand::RedrawRequested => {
-                    self.redraw_requested.notify_one();
-                }
-                WindowCommand::UpdateDimensions { dimensions } => {
-                    // Dimensions updates where the dimensions are unchanged are spurious.
-                    self.dimensions.send_if_modified(|current_dimensions| {
-                        if *current_dimensions != dimensions {
-                            *current_dimensions = dimensions;
-                            true
-                        } else {
-                            false
+                WindowCommand::WinitWindowEvent { event } => {
+                    use winit::event::WindowEvent;
+                    match event.clone() {
+                        WindowEvent::Destroyed => {
+                            close_result = Some(Ok(()));
+                            for responder in close_responders.drain(..) {
+                                // We can ignore the error if the user has dropped their future.
+                                responder.send(Ok(())).ok();
+                            }
+                            break;
                         }
-                    });
-                }
-                WindowCommand::KeyboardInput { event } => {
-                    self.keyboard_events.send(event).ok();
+                        WindowEvent::RedrawRequested => {
+                            self.redraw_requested.notify_one();
+                        }
+                        WindowEvent::Resized(dimensions) => {
+                            // Dimensions updates where the dimensions are unchanged are spurious.
+                            self.dimensions.send_if_modified(|current_dimensions| {
+                                if *current_dimensions != dimensions {
+                                    *current_dimensions = dimensions;
+                                    true
+                                } else {
+                                    false
+                                }
+                            });
+                        }
+                        WindowEvent::KeyboardInput { event, .. } => {
+                            self.keyboard_events.send(event).ok();
+                        }
+                        _ => {}
+                    }
+                    self.window_events.send(event).ok();
                 }
             }
         }
@@ -307,11 +335,13 @@ impl WindowWorker {
                         close_responders.push(responder);
                     }
                 }
-                WindowCommand::ConfirmClosed { result } => {
-                    close_result = Some(result.clone());
+                WindowCommand::WinitWindowEvent {
+                    event: winit::event::WindowEvent::Destroyed,
+                } => {
+                    close_result = Some(Ok(()));
                     for responder in close_responders.drain(..) {
                         // We can ignore the error if the user has dropped their future.
-                        responder.send(result.clone()).ok();
+                        responder.send(Ok(())).ok();
                     }
                 }
                 _ => {
@@ -373,6 +403,26 @@ impl WindowKeyboardListener {
 
     /// Waits for a [`winit::event::KeyEvent`].
     pub async fn wait_event(&mut self) -> KeyEvent {
+        loop {
+            if let Some(event) = self.subscription.recv().await.ok() {
+                return event;
+            }
+        }
+    }
+}
+
+pub struct WindowEventListener {
+    subscription: broadcast::Receiver<winit::event::WindowEvent>,
+}
+
+impl WindowEventListener {
+    /// Returns a [`winit::event::WindowEvent`] if a new one is available, consuming it.
+    pub fn event(&mut self) -> Option<winit::event::WindowEvent> {
+        self.subscription.try_recv().ok()
+    }
+
+    /// Waits for a [`winit::event::WindowEvent`].
+    pub async fn wait_event(&mut self) -> winit::event::WindowEvent {
         loop {
             if let Some(event) = self.subscription.recv().await.ok() {
                 return event;
