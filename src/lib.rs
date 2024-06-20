@@ -18,6 +18,7 @@ use winit::{
 };
 
 pub use egui;
+pub use tegui::EguiRenderer;
 
 const COMMAND_CHANNEL_DEPTH: usize = 64;
 

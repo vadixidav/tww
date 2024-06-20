@@ -5,7 +5,6 @@
 
 use std::sync::Arc;
 
-use egui::Rect;
 use futures::FutureExt;
 use tww::Result;
 use winit::keyboard::{Key, NamedKey};

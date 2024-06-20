@@ -82,7 +82,6 @@ impl EguiRenderer {
                 self.window.redraw_no_wait();
             }
         }
-        self.update_viewport(false);
         let raw_input = self.winit_state.take_egui_input(&self.window.window);
         let full_output = self.winit_state.egui_ctx().run(raw_input, run_ui);
 
@@ -158,6 +157,7 @@ impl EguiRenderer {
     pub async fn resized(&mut self, dimensions: PhysicalSize<u32>) {
         let _ = dimensions;
         // egui_winit::update_viewport_info(&mut self.viewport_info, egui_ctx, window, false);
+        self.update_viewport(false);
         todo!()
     }
 
