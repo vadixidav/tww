@@ -41,6 +41,7 @@ impl ApplicationHandler<WinitCommand> for Application {
         window_id: winit::window::WindowId,
         event: WindowEvent,
     ) {
+        log::trace!("window {window_id:?}: {event:?}");
         context().window_command(
             window_id,
             WindowCommand::WinitWindowEvent {
