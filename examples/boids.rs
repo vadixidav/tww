@@ -298,8 +298,8 @@ pub async fn run(instance: Arc<wgpu::Instance>) -> Result<()> {
     let mut frame_num = 0usize;
 
     loop {
-        // Wait for the window to require a redraw.
-        window.wait_redraw_requested().await;
+        // Request a redraw and wait on it.
+        window.redraw().await;
 
         frame_num += 1;
         let frame = match surface.get_current_texture() {

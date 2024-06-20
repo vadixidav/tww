@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use futures::FutureExt;
+use futures::{pin_mut, FutureExt};
 use tww::Result;
 use winit::keyboard::{Key, NamedKey};
 
@@ -114,6 +114,9 @@ pub async fn run(instance: Arc<wgpu::Instance>) -> Result<()> {
         None,
     );
 
+    let redraw = window.redraw().fuse();
+    pin_mut!(redraw);
+
     loop {
         futures::select_biased!(
             dimensions = dimensions_watcher.wait_dimensions().fuse() => {
@@ -131,13 +134,15 @@ pub async fn run(instance: Arc<wgpu::Instance>) -> Result<()> {
                     return Ok(());
                 }
             }
-            _ = window.redraw().fuse() => {
+            _ = redraw => {
                 egui_renderer.ui(|ctx| {
                     egui::CentralPanel::default().show(&ctx, ui);
                 });
                 if let Err(e) = egui_renderer.render(&surface, None) {
                     log::error!("error: {e}");
                 }
+                // Attempt another redraw immediately.
+                redraw.set(window.redraw().fuse());
             }
         );
     }

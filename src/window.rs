@@ -5,7 +5,7 @@ use crate::{
 use futures::FutureExt;
 use snafu::ResultExt;
 use std::sync::Arc;
-use tokio::sync::{broadcast, mpsc, oneshot, watch, Notify};
+use tokio::sync::{broadcast, futures::Notified, mpsc, oneshot, watch, Notify};
 use winit::{
     dpi::{LogicalSize, PhysicalSize},
     event::KeyEvent,
@@ -185,9 +185,9 @@ impl Window {
     }
 
     /// Ask the window to redraw and wait until it is ready to be redrawn.
-    pub async fn redraw(&self) {
+    pub fn redraw(&self) -> Notified<'_> {
         self.window.request_redraw();
-        self.wait_redraw_requested().await;
+        self.wait_redraw_requested()
     }
 
     /// Ask the window to redraw.
@@ -198,8 +198,8 @@ impl Window {
     }
 
     /// Wait until a redraw is requested for this window.
-    pub async fn wait_redraw_requested(&self) {
-        self.redraw_requested.notified().await;
+    pub fn wait_redraw_requested(&self) -> Notified<'_> {
+        self.redraw_requested.notified()
     }
 
     /// Check if a redraw is requested for this window.
