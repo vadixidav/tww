@@ -3,6 +3,7 @@ use crate::{
     RuntimeCommand, TwwError, WindowAttributes, COMMAND_CHANNEL_DEPTH,
 };
 use futures::FutureExt;
+use raw_window_handle::{HasDisplayHandle, HasRawDisplayHandle, HasWindowHandle};
 use snafu::ResultExt;
 use std::sync::Arc;
 use tokio::sync::{broadcast, futures::Notified, mpsc, oneshot, watch, Notify};
@@ -255,6 +256,24 @@ impl Window {
         WindowEventListener {
             subscription: self.window_events.subscribe(),
         }
+    }
+}
+
+impl HasDisplayHandle for Window {
+    fn display_handle(
+        &self,
+    ) -> std::result::Result<raw_window_handle::DisplayHandle<'_>, raw_window_handle::HandleError>
+    {
+        self.window.display_handle()
+    }
+}
+
+impl HasWindowHandle for Window {
+    fn window_handle(
+        &self,
+    ) -> std::result::Result<raw_window_handle::WindowHandle<'_>, raw_window_handle::HandleError>
+    {
+        self.window.window_handle()
     }
 }
 
