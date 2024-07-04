@@ -3,7 +3,7 @@ use crate::{
     RuntimeCommand, TwwError, WindowAttributes, COMMAND_CHANNEL_DEPTH,
 };
 use futures::FutureExt;
-use raw_window_handle::{HasDisplayHandle, HasRawDisplayHandle, HasWindowHandle};
+use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use snafu::ResultExt;
 use std::sync::Arc;
 use tokio::sync::{broadcast, futures::Notified, mpsc, oneshot, watch, Notify};

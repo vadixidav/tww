@@ -112,7 +112,6 @@ impl EguiRenderer {
             &mut viewport_info,
             viewport_output.commands,
             &*self.window.window,
-            true,
             &mut actions_requested,
         );
         self.winit_state
